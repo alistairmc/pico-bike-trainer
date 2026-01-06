@@ -28,16 +28,19 @@ class SpeedSensor:
         # Initialize pulse tracking (used for both real and simulated pulses)
         self.pulse_count = 0
         self.last_pulse_time = 0
-        self.pulse_times = []  # Store recent pulse times for pedal speed calculation
+        self.pulse_times = []  # Store recent pulse times for pedal speed calculation (1 second window)
+        self.crpm_pulse_times = []  # Store extended pulse times for CRPM calculation (10 second window)
         self.wheel_circumference = 2.1  # meters (typical bike wheel)
         self.calibration_factor = 1.0  # Calibration factor to adjust speed calculation
-        self.sample_window_ms = 1000  # 1 second window for speed calculation
+        self.sample_window_ms = 5000  # 5 second window for speed calculation (extended for low RPM)
+        self.crpm_sample_window_ms = 10000  # 10 second window for CRPM calculation (allows low RPM detection)
         
         if gpio_pin is not None:
             self.hall_sensor = Pin(gpio_pin, Pin.IN, Pin.PULL_UP)
             # Note: GPIO reads pedal speed (cadence), not wheel speed
-            # Set up interrupt handler for pulse counting
-            self.hall_sensor.irq(trigger=Pin.IRQ_FALLING, handler=self._pulse_handler)
+            # Sensor is normally OFF (LOW) and goes HIGH when triggered
+            # Set up interrupt handler for pulse counting (trigger on rising edge)
+            self.hall_sensor.irq(trigger=Pin.IRQ_RISING, handler=self._pulse_handler)
         else:
             self.hall_sensor = None
             # Mock mode - will use simulated speed or manual pulses
@@ -94,35 +97,83 @@ class SpeedSensor:
                 pulse_time = current_time - (i * time_per_revolution_ms)
                 # Add pulses within the extended window
                 if pulse_time >= (current_time - extended_window):
-                    self.pulse_times.append(int(pulse_time))
+                    pulse_time_int = int(pulse_time)
+                    self.pulse_times.append(pulse_time_int)
+                    self.crpm_pulse_times.append(pulse_time_int)  # Also add to CRPM list
                     self.pulse_count += 1
             
             # Sort pulses to ensure they're in chronological order
             self.pulse_times.sort()
+            self.crpm_pulse_times.sort()
     
     def _pulse_handler(self, _pin):
         """Interrupt handler for hall sensor pulses.
+        
+        One pulse = one full crank rotation (360 degrees).
+        Sensor is normally LOW and goes HIGH when triggered.
         
         Args:
             _pin: The pin that triggered the interrupt (unused but required by MicroPython).
         """
         current_time = utime.ticks_ms()
         self.pulse_count += 1
+        self.last_pulse_time = current_time
         self.pulse_times.append(current_time)
-        # Keep only pulses within the sample window
+        self.crpm_pulse_times.append(current_time)  # Also add to extended window for CRPM
+        # Keep only pulses within the sample window (for speed calculation)
         cutoff_time = current_time - self.sample_window_ms
         self.pulse_times = [t for t in self.pulse_times if t > cutoff_time]
+        # Keep pulses within CRPM sample window (longer window for low RPM detection)
+        crpm_cutoff_time = current_time - self.crpm_sample_window_ms
+        self.crpm_pulse_times = [t for t in self.crpm_pulse_times if t > crpm_cutoff_time]
+    
+    def _calculate_crank_rpm(self):
+        """Calculate current crank RPM from pulse data.
+        
+        Returns:
+            Crank RPM (revolutions per minute), or 0 if not enough data.
+        """
+        current_time = utime.ticks_ms()
+        
+        if self.simulated_rpm_enabled and self.target_rpm is not None:
+            return int(self.target_rpm)
+        
+        # Clean up old pulses from CRPM window
+        crpm_cutoff_time = current_time - self.crpm_sample_window_ms
+        self.crpm_pulse_times = [t for t in self.crpm_pulse_times if t > crpm_cutoff_time]
+        
+        if len(self.crpm_pulse_times) >= 2:
+            # Multiple pulses: calculate RPM from time span
+            time_span = self.crpm_pulse_times[-1] - self.crpm_pulse_times[0]
+            if time_span > 0:
+                time_span_seconds = time_span / 1000.0
+                num_revolutions = len(self.crpm_pulse_times) - 1
+                pedal_rps = num_revolutions / time_span_seconds
+                return int(pedal_rps * 60)
+        elif len(self.crpm_pulse_times) == 1:
+            # Single pulse: calculate RPM from time since that pulse
+            time_since_pulse = utime.ticks_diff(current_time, self.crpm_pulse_times[0])
+            if time_since_pulse > 0 and time_since_pulse < 15000:  # Within 15 seconds
+                time_per_rev_seconds = time_since_pulse / 1000.0
+                return int(60.0 / time_per_rev_seconds)
+        elif self.last_pulse_time > 0:
+            # No recent pulses, but we have a last pulse time
+            time_since_pulse = utime.ticks_diff(current_time, self.last_pulse_time)
+            if time_since_pulse > 0 and time_since_pulse < 5000:  # Within 5 seconds
+                time_per_rev_seconds = time_since_pulse / 1000.0
+                return int(60.0 / time_per_rev_seconds)
+        
+        return 0
     
     def read_speed(self):
-        """Read speed from the hall sensor and return the value in km/h.
+        """Read speed calculated from WRPM (wheel RPM) and return the value in km/h.
         
-        Reads pulses from the GPIO pin (hall sensor measuring pedal speed/cadence)
-        and calculates bike speed based on pedal speed, gear ratio, and wheel circumference.
-        Works with both real GPIO pulses and simulated pulses for testing.
+        Calculates speed from current WRPM (wheel RPM) which is derived from
+        CRPM (crank RPM) and gear ratio. This provides smooth speed updates
+        on every screen refresh.
         
-        If simulated RPM is enabled, pulses are continuously regenerated at the target RPM.
-        
-        Speed = pedal_speed * gear_ratio * wheel_circumference
+        Speed (km/h) = WRPM * wheel_circumference * 0.06
+        Where: WRPM = CRPM * gear_ratio
         
         Returns:
             Speed reading in km/h.
@@ -133,8 +184,8 @@ class SpeedSensor:
         # If simulated RPM is enabled, regenerate pulses consistently at the target RPM
         if self.simulated_rpm_enabled:
             # Always regenerate pulses to maintain consistent RPM
-            # This ensures the pulse pattern is always correct for the target RPM
             self.pulse_times = []
+            self.crpm_pulse_times = []
             self.pulse_count = 0
             self._initialize_default_pulses(self.target_rpm)
         else:
@@ -142,30 +193,21 @@ class SpeedSensor:
             cutoff_time = current_time - self.sample_window_ms
             self.pulse_times = [t for t in self.pulse_times if t > cutoff_time]
         
-        if len(self.pulse_times) < 2:
-            # Need at least 2 pulses to calculate pedal speed
-            speed_kmh = 0.0
+        # Calculate current crank RPM
+        crank_rpm = self._calculate_crank_rpm()
+        
+        # Calculate wheel RPM from crank RPM and gear ratio
+        if self.gear_selector is not None:
+            gear_ratio = self.gear_selector.get_current_ratio()
         else:
-            # Calculate pedal speed (revolutions per second)
-            time_span = self.pulse_times[-1] - self.pulse_times[0]
-            if time_span > 0:
-                time_span_seconds = time_span / 1000.0
-                num_revolutions = len(self.pulse_times) - 1  # Number of pedal revolutions
-                pedal_rps = num_revolutions / time_span_seconds  # Revolutions per second
-                
-                # Get current gear ratio
-                if self.gear_selector is not None:
-                    gear_ratio = self.gear_selector.get_current_ratio()
-                else:
-                    gear_ratio = 1.0  # Default to 1:1 if no gear selector
-                
-                # Calculate bike speed: pedal_rps * gear_ratio * wheel_circumference
-                # Convert to km/h: (m/s) * 3.6
-                # Apply calibration factor to adjust for actual wheel size/measurements
-                wheel_speed_mps = pedal_rps * gear_ratio * self.wheel_circumference * self.calibration_factor
-                speed_kmh = wheel_speed_mps * 3.6
-            else:
-                speed_kmh = 0.0
+            gear_ratio = 1.0  # Default to 1:1 if no gear selector
+        
+        wheel_rpm = crank_rpm * gear_ratio
+        
+        # Calculate speed from WRPM: speed (km/h) = WRPM * circumference (m) * 0.06
+        # Formula: WRPM revolutions/min * circumference (m) * 60 min/hour / 1000 m/km = WRPM * circumference * 0.06
+        # Apply calibration factor
+        speed_kmh = wheel_rpm * self.wheel_circumference * self.calibration_factor * 0.06
         
         self.last_read_speed = speed_kmh
         return speed_kmh
@@ -257,21 +299,9 @@ class SpeedSensor:
                 if self.speed_y is None:
                     self.speed_y = 30
                 
-                # Calculate crank RPM from pulse data
-                if len(self.pulse_times) >= 2:
-                    time_span = self.pulse_times[-1] - self.pulse_times[0]
-                    if time_span > 0:
-                        time_span_seconds = time_span / 1000.0
-                        num_revolutions = len(self.pulse_times) - 1
-                        pedal_rps = num_revolutions / time_span_seconds
-                        crank_rpm = int(pedal_rps * 60)  # Convert to RPM
-                    else:
-                        crank_rpm = 0
-                elif self.simulated_rpm_enabled and self.target_rpm is not None:
-                    # Use simulated RPM if available
-                    crank_rpm = int(self.target_rpm)
-                else:
-                    crank_rpm = 0
+                # Calculate crank RPM from pulse data using the same method as read_speed()
+                # One pulse = one full crank rotation (360 degrees)
+                crank_rpm = self._calculate_crank_rpm()
                 
                 # Calculate wheel RPM from crank RPM and gear ratio
                 if self.gear_selector is not None:
@@ -328,16 +358,16 @@ class SpeedSensor:
                         if rpm_color is not None and load_x is not None and load_y is not None:
                             lcd.write_text(load_text, int(load_x), int(load_y), 2, int(rpm_color))
                         
-                            # Display incline value
-                            incline_percent = self.load_controller.get_incline()
-                            incline_y = load_y + 18  # Position below load (reduced spacing)
-                            # Format incline: positive = uphill, negative = downhill, 0 = flat
-                            if incline_percent > 0:
-                                incline_text = "Hill: +" + str(int(incline_percent))
-                            elif incline_percent < 0:
-                                incline_text = "Hill: " + str(int(incline_percent))  # Negative sign included
-                            else:
-                                incline_text = "Hill: 0"
+                        # Display incline value
+                        incline_percent = self.load_controller.get_incline()
+                        incline_y = load_y + 18  # Position below load (reduced spacing)
+                        # Format incline: positive = uphill, negative = downhill, 0 = flat
+                        if incline_percent > 0:
+                            incline_text = "Hill: +" + str(int(incline_percent))
+                        elif incline_percent < 0:
+                            incline_text = "Hill: " + str(int(incline_percent))  # Negative sign included
+                        else:
+                            incline_text = "Hill: 0"
                         
                         # Center incline text
                         incline_text_width = len(incline_text) * rpm_char_width
@@ -412,6 +442,7 @@ class SpeedSensor:
             if self.gpio_pin is None:
                 # Mock mode: clear all pulses
                 self.pulse_times = []
+                self.crpm_pulse_times = []
                 self.pulse_count = 0
             # If GPIO pin is set, real pulses will continue to work
         
