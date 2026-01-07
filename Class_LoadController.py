@@ -270,7 +270,7 @@ class LoadController:
         """Move motor until motor_crank_position reaches target position.
         
         Args:
-            target_position: Target motor crank position (0-1000, representing 0-360 degrees).
+            target_position: Target motor crank position (can be negative or positive, -500 to +500).
             forward: True to move forward, False to move reverse.
         """
         if self.motor_sensor is None or self.motor_is_running:
@@ -287,43 +287,17 @@ class LoadController:
         timeout_ms = 30000  # 30 second timeout
         start_time = utime.ticks_ms()
         
-        current_position = self.motor_sensor.motor_crank_position
-        if current_position < 0:
-            current_position = current_position % self.motor_sensor.motor_rotations_per_motor_crank
-        
-        max_position = self.motor_sensor.motor_rotations_per_motor_crank
-        
-        if forward:
-            # Moving forward - wait until position reaches target (handling wrap-around)
-            # Normalize positions to handle wrapping
-            while True:
-                if utime.ticks_diff(utime.ticks_ms(), start_time) > timeout_ms:
-                    break
-                current_position = self.motor_sensor.motor_crank_position
-                if current_position < 0:
-                    current_position = current_position % max_position
-                
-                # Check if we've reached target (accounting for wrap-around)
-                # Forward: we've reached target if current >= target (normal case) or wrapped past it
-                forward_distance = (target_position - current_position + max_position) % max_position
-                if forward_distance <= 5:  # Within 5 position units (tolerance)
-                    break
-                utime.sleep_ms(10)
-        else:
-            # Moving reverse - wait until position reaches target (handling wrap-around)
-            while True:
-                if utime.ticks_diff(utime.ticks_ms(), start_time) > timeout_ms:
-                    break
-                current_position = self.motor_sensor.motor_crank_position
-                if current_position < 0:
-                    current_position = current_position % max_position
-                
-                # Check if we've reached target (accounting for wrap-around)
-                # Reverse: we've reached target if current <= target (normal case) or wrapped past it
-                reverse_distance = (current_position - target_position + max_position) % max_position
-                if reverse_distance <= 5:  # Within 5 position units (tolerance)
-                    break
-                utime.sleep_ms(10)
+        # Wait until we reach target position (allowing negative positions)
+        while True:
+            if utime.ticks_diff(utime.ticks_ms(), start_time) > timeout_ms:
+                break
+            current_position = self.motor_sensor.motor_crank_position
+            
+            # Check if we've reached target (within tolerance)
+            position_diff = abs(target_position - current_position)
+            if position_diff <= 5:  # Within 5 position units (tolerance)
+                break
+            utime.sleep_ms(10)
         
         self.stop_motor()
         self.motor_is_running = False
@@ -379,38 +353,52 @@ class LoadController:
         # If we have a motor sensor, move motor to target position
         if self.motor_sensor is not None:
             # Target position: 0 degrees = 0% load, 180 degrees = 100% load
-            # 90 degrees = 50% load (first gear baseline)
-            # Calculate target motor crank position: (target_degrees / 360) * motor_rotations_per_crank
+            # Position 0 = 0% load, position 500 (forward) = 100% load, position -500 (reverse) = 100% load
+            # Calculate target motor crank position: (target_degrees / 180) * 500
+            # 500 represents 180 degrees (half of 1000 rotations per full crank rotation)
             target_degrees = (total_load / 100.0) * 180.0  # Convert 0-100% to 0-180 degrees
-            target_position = int((target_degrees / 360.0) * self.motor_sensor.motor_rotations_per_motor_crank)
+            max_load_position = self.motor_sensor.motor_rotations_per_motor_crank // 2  # 500 for 180 degrees
+            target_position_abs = int((target_degrees / 180.0) * max_load_position)  # 0 to 500
             
-            # Get current motor crank position (0-1000 range)
+            # Get current motor crank position (can be negative or positive)
             current_position = self.motor_sensor.motor_crank_position
-            if current_position < 0:
-                # Handle negative positions
-                current_position = current_position % self.motor_sensor.motor_rotations_per_motor_crank
+            current_abs = abs(current_position)
             
-            max_position = self.motor_sensor.motor_rotations_per_motor_crank
+            # Calculate current load based on absolute position
+            current_load = (current_abs / max_load_position) * 100.0 if max_load_position > 0 else 0.0
+            current_load = min(100.0, current_load)  # Clamp to 100%
             
             # Determine if we're increasing or decreasing load
-            # Higher position = higher load (closer to 180 degrees = 500 position)
-            # Lower position = lower load (closer to 0 degrees = 0 position)
-            is_increasing_load = target_position > current_position
+            is_increasing_load = total_load > current_load
             
-            # Calculate distances in both directions
-            forward_distance = (target_position - current_position + max_position) % max_position
-            reverse_distance = (current_position - target_position + max_position) % max_position
-            
-            # Choose direction based on whether we're increasing or decreasing load
-            # Always move in the correct direction (forward to increase, reverse to decrease)
-            # This prevents moving in the wrong direction first, even if it's shorter
+            # Choose target position (positive or negative) based on current position and direction
+            # If increasing load and current is negative, prefer positive target
+            # If decreasing load and current is positive, prefer negative target
+            # Otherwise, choose direction that doesn't go wrong way first
             if is_increasing_load:
-                # Increasing load: always move forward
-                position_diff = forward_distance
+                # Increasing load: prefer forward (positive) if current is at or near 0
+                # If current is negative, move forward to positive
+                if current_position <= 0:
+                    target_position = target_position_abs  # Forward to positive
+                else:
+                    # Current is positive, move forward to higher positive
+                    target_position = target_position_abs
+            else:
+                # Decreasing load: prefer reverse (negative) if current is at or near 0
+                # If current is positive, move reverse to negative
+                if current_position >= 0:
+                    target_position = -target_position_abs  # Reverse to negative
+                else:
+                    # Current is negative, move reverse to higher negative (closer to 0)
+                    target_position = -target_position_abs
+            
+            # Calculate distance to target
+            position_diff = abs(target_position - current_position)
+            
+            # Determine direction to move
+            if target_position > current_position:
                 use_forward = True
             else:
-                # Decreasing load: always move reverse
-                position_diff = reverse_distance
                 use_forward = False
             
             # Only move if difference is significant (more than 5 position units = ~1.8 degrees)
@@ -469,11 +457,14 @@ class LoadController:
             Current load percentage based on motor crank position or estimated load.
         """
         if self.motor_sensor is not None:
-            # Use motor crank position to estimate load
-            # 0 degrees (bottom/stop position) = 0% load = least resistance
-            # 180 degrees (top) = 100% load = most resistance
-            position = self.motor_sensor.get_motor_crank_position()
-            return (position / 180.0) * 100.0
+            # Calculate load based on absolute motor crank position
+            # Position 0 = 0% load, position 500 (forward) or -500 (reverse) = 180 degrees = 100% load
+            # Both +500 and -500 represent the same load (180 degrees either way from 0)
+            position = self.motor_sensor.motor_crank_position
+            position_abs = abs(position)
+            max_load_position = self.motor_sensor.motor_rotations_per_motor_crank // 2  # 500 for 180 degrees
+            load = (position_abs / max_load_position) * 100.0 if max_load_position > 0 else 0.0
+            return max(0.0, min(100.0, load))  # Clamp to 0-100%
         
         # No motor sensor, return estimated load based on gear and incline
         base_load = self._calculate_base_load()
