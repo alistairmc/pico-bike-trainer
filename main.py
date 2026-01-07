@@ -1,13 +1,12 @@
 # WaceShare Library code
 # Alistair Mcgranaghan 24/09/2022
-from machine import Pin,SPI,PWM,ADC
+from machine import Pin,SPI,PWM
 import machine
 import framebuf
 import utime
 import os
 import math
 from Class_LCD1Inch3 import LCD1Inch3 as LCD_Driver_Class
-from Class_TempSensor import TempSensor
 from Class_SpeedSensor import SpeedSensor
 from Class_GearSelector import GearSelector
 from Class_LoadController import LoadController
@@ -16,11 +15,10 @@ from Class_ColorHelper import ColorHelper
 
 # Global values
 LCD = LCD_Driver_Class()
-temp_sensor = TempSensor(screen_width=LCD.width, screen_height=LCD.height)
 gear_selector = GearSelector(num_gears=7, min_ratio=1.0, max_ratio=4.5, screen_width=LCD.width, screen_height=LCD.height)
 load_controller = LoadController(step_pin=5, dir_pin=6, enable_pin=7, gear_selector=gear_selector)  # Stepper motor control pins
 motor_sensor = MotorSensor(motor_count_gpio_pin=0, motor_stop_gpio_pin=1, screen_width=LCD.width, screen_height=LCD.height)  # Motor RPM sensor on GPIO pin 0, Motor stop trigger on GPIO pin 1
-speed_sensor = SpeedSensor(gpio_pin=1, gear_selector=gear_selector, load_controller=load_controller, screen_width=LCD.width, screen_height=LCD.height)
+speed_sensor = SpeedSensor(gpio_pin=4, gear_selector=gear_selector, load_controller=load_controller, screen_width=LCD.width, screen_height=LCD.height)
 # Calibrate for 26-inch wheel: 30 mph (48.28 km/h) at 388 wheel RPM
 # Note: This assumes the hall sensor measures wheel RPM, not pedal RPM
 # If measuring pedal RPM, calibration should account for gear ratio
@@ -41,7 +39,6 @@ MIN_INCLINE = -100.0  # Maximum decline (-100%)
 # Background color - black
 LCD.fill(ColorHelper.rgb_color(0,0,0))
 # Initial display of all components
-#temp_sensor.update_display(LCD, ColorHelper.rgb_color, back_col)
 speed_sensor.update_display(LCD, ColorHelper.rgb_color, back_col)
 gear_selector.update_display(LCD, ColorHelper.rgb_color, back_col)
 # Display motor and crank counts
@@ -80,7 +77,6 @@ while(running):
         LCD.fill(back_col)
         # Force immediate display update with new unit
         speed_sensor.update_display(LCD, ColorHelper.rgb_color, back_col)
-        temp_sensor.update_display(LCD, ColorHelper.rgb_color, back_col)
         gear_selector.update_display(LCD, ColorHelper.rgb_color, back_col)
         LCD.show()
         last_display_update_time = utime.ticks_ms()  # Reset timer
@@ -92,7 +88,6 @@ while(running):
         # Force immediate display update
         LCD.fill(back_col)
         speed_sensor.update_display(LCD, ColorHelper.rgb_color, back_col)
-        temp_sensor.update_display(LCD, ColorHelper.rgb_color, back_col)
         gear_selector.update_display(LCD, ColorHelper.rgb_color, back_col)
         LCD.show()
         last_display_update_time = utime.ticks_ms()  # Reset timer
@@ -104,7 +99,6 @@ while(running):
         # Force immediate display update
         LCD.fill(back_col)
         speed_sensor.update_display(LCD, ColorHelper.rgb_color, back_col)
-        temp_sensor.update_display(LCD, ColorHelper.rgb_color, back_col)
         gear_selector.update_display(LCD, ColorHelper.rgb_color, back_col)
         LCD.show()
         last_display_update_time = utime.ticks_ms()  # Reset timer
@@ -116,7 +110,6 @@ while(running):
         # Force immediate display update
         LCD.fill(back_col)
         speed_sensor.update_display(LCD, ColorHelper.rgb_color, back_col)
-        temp_sensor.update_display(LCD, ColorHelper.rgb_color, back_col)
         gear_selector.update_display(LCD, ColorHelper.rgb_color, back_col)
         LCD.show()
         last_display_update_time = utime.ticks_ms()  # Reset timer
@@ -129,7 +122,6 @@ while(running):
         load_controller.set_incline(new_incline)
         # Clear screen and redraw all displays
         LCD.fill(back_col)
-        temp_sensor.update_display(LCD, ColorHelper.rgb_color, back_col)
         speed_sensor.update_display(LCD, ColorHelper.rgb_color, back_col)
         gear_selector.update_display(LCD, ColorHelper.rgb_color, back_col)
         LCD.show()
@@ -143,7 +135,6 @@ while(running):
         load_controller.set_incline(new_incline)
         # Clear screen and redraw all displays
         LCD.fill(back_col)
-        temp_sensor.update_display(LCD, ColorHelper.rgb_color, back_col)
         speed_sensor.update_display(LCD, ColorHelper.rgb_color, back_col)
         gear_selector.update_display(LCD, ColorHelper.rgb_color, back_col)
         LCD.show()
@@ -157,7 +148,6 @@ while(running):
             load_controller.apply_load()
             # Clear screen and redraw all displays
             LCD.fill(back_col)
-            temp_sensor.update_display(LCD, ColorHelper.rgb_color, back_col)
             speed_sensor.update_display(LCD, ColorHelper.rgb_color, back_col)
             gear_selector.update_display(LCD, ColorHelper.rgb_color, back_col)
             LCD.show()
@@ -171,7 +161,6 @@ while(running):
             load_controller.apply_load()
             # Clear screen and redraw all displays
             LCD.fill(back_col)
-            temp_sensor.update_display(LCD, ColorHelper.rgb_color, back_col)
             speed_sensor.update_display(LCD, ColorHelper.rgb_color, back_col)
             gear_selector.update_display(LCD, ColorHelper.rgb_color, back_col)
             LCD.show()
