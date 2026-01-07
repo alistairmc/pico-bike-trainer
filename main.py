@@ -16,8 +16,12 @@ from Class_ColorHelper import ColorHelper
 # Global values
 LCD = LCD_Driver_Class()
 gear_selector = GearSelector(num_gears=7, min_ratio=1.0, max_ratio=4.5, screen_width=LCD.width, screen_height=LCD.height)
-load_controller = LoadController(step_pin=5, dir_pin=6, enable_pin=7, gear_selector=gear_selector)  # Stepper motor control pins
 motor_sensor = MotorSensor(motor_count_gpio_pin=0, motor_stop_gpio_pin=1, screen_width=LCD.width, screen_height=LCD.height)  # Motor RPM sensor on GPIO pin 0, Motor stop trigger on GPIO pin 1
+load_controller = LoadController(l298n_in1_pin=5, l298n_in2_pin=6, gear_selector=gear_selector, motor_sensor=motor_sensor)  # L298N motor control pins
+
+# Perform startup calibration: move to bottom position, then to top position (180 degrees)
+load_controller.startup_calibration()
+
 speed_sensor = SpeedSensor(gpio_pin=4, gear_selector=gear_selector, load_controller=load_controller, screen_width=LCD.width, screen_height=LCD.height)
 # Calibrate for 26-inch wheel: 30 mph (48.28 km/h) at 388 wheel RPM
 # Note: This assumes the hall sensor measures wheel RPM, not pedal RPM
@@ -41,9 +45,6 @@ LCD.fill(ColorHelper.rgb_color(0,0,0))
 # Initial display of all components
 speed_sensor.update_display(LCD, ColorHelper.rgb_color, back_col)
 gear_selector.update_display(LCD, ColorHelper.rgb_color, back_col)
-# Display motor and crank counts
-motor_display_y = 30 + 61 + (18 * 4) + 18  # Below incline display
-motor_sensor.update_display(LCD, ColorHelper.rgb_color, back_col, start_y=motor_display_y)
 # Apply initial load based on starting gear
 load_controller.apply_load()
 LCD.show()
@@ -173,6 +174,10 @@ while(running):
     # Read current speed (needed for display, but don't use for conditional updates)
     speed_sensor.read_speed()
     
+    # Continuously update load to adjust motor position towards target
+    # This ensures the motor moves to the correct position based on gear and incline
+    load_controller.apply_load()
+    
     # Update display 4 times per second (every 250ms)
     current_time = utime.ticks_ms()
     if utime.ticks_diff(current_time, last_display_update_time) >= display_update_interval_ms:
@@ -181,10 +186,6 @@ while(running):
         # Redraw all displays
         speed_sensor.update_display(LCD, ColorHelper.rgb_color, back_col)
         gear_selector.update_display(LCD, ColorHelper.rgb_color, back_col)
-        # Display motor and crank counts below the speed sensor display
-        # Position after incline (speed_y + 61 + 18*4 = speed_y + 133, add 18 more for spacing)
-        motor_display_y = 30 + 61 + (18 * 4) + 18  # Below incline display
-        motor_sensor.update_display(LCD, ColorHelper.rgb_color, back_col, start_y=motor_display_y)
         LCD.show()
         last_display_update_time = current_time
 
