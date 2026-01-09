@@ -7,202 +7,100 @@ import utime
 import os
 import math
 from Class_LCD1Inch3 import LCD1Inch3 as LCD_Driver_Class
-from Class_SpeedSensor import SpeedSensor
+from Class_CrankSensor import CrankSensor
+from Class_WheelSpeedSensor import WheelSpeedSensor
+from Class_SpeedController import SpeedController
 from Class_GearSelector import GearSelector
 from Class_LoadController import LoadController
 from Class_MotorSensor import MotorSensor
 from Class_ColorHelper import ColorHelper
+from Class_View import View
+from Class_ButtonController import ButtonController
 
 # Global values
 LCD = LCD_Driver_Class()
-gear_selector = GearSelector(num_gears=7, min_ratio=1.0, max_ratio=4.5, screen_width=LCD.width, screen_height=LCD.height)
-motor_sensor = MotorSensor(motor_count_gpio_pin=0, motor_stop_gpio_pin=1, screen_width=LCD.width, screen_height=LCD.height)  # Motor RPM sensor on GPIO pin 0, Motor stop trigger on GPIO pin 1
-load_controller = LoadController(l298n_in1_pin=5, l298n_in2_pin=6, gear_selector=gear_selector, motor_sensor=motor_sensor)  # L298N motor control pins
+gear_selector = GearSelector(num_gears=7, min_ratio=1.0, max_ratio=4.5)
+motor_sensor = MotorSensor(motor_count_gpio_pin=0, motor_stop_gpio_pin=1)  # Motor RPM sensor on GPIO pin 0, Motor stop trigger on GPIO pin 1
+load_controller = LoadController(l298n_in1_pin=5, l298n_in2_pin=6, gear_selector=gear_selector, motor_sensor=motor_sensor, lcd=LCD, rgb_color_func=ColorHelper.rgb_color)  # L298N motor control pins
 
 # Perform startup calibration: move to bottom position, then to top position (180 degrees)
 load_controller.startup_calibration()
 
-speed_sensor = SpeedSensor(gpio_pin=4, gear_selector=gear_selector, load_controller=load_controller, screen_width=LCD.width, screen_height=LCD.height)
-# Calibrate for 26-inch wheel: 30 mph (48.28 km/h) at 388 wheel RPM
-# Note: This assumes the hall sensor measures wheel RPM, not pedal RPM
-# If measuring pedal RPM, calibration should account for gear ratio
-speed_sensor.set_wheel_circumference(2.075)  # 26-inch wheel circumference in meters
-speed_sensor.set_calibration_from_wheel_rpm(48.28, 388)  # 30 mph at 388 wheel RPM
+# Crank sensor (measures pedal/crank speed - returns RPM only)
+crank_sensor = CrankSensor(gpio_pin=7)
+
+# Wheel speed sensor (measures flywheel/wheel speed directly - returns RPM only)
+wheel_speed_sensor = WheelSpeedSensor(gpio_pin=4)
+
+# Speed controller (manages all speed calculations)
+speed_controller = SpeedController(
+    crank_sensor=crank_sensor,
+    wheel_speed_sensor=wheel_speed_sensor,
+    gear_selector=gear_selector,
+    load_controller=load_controller
+)
+speed_controller.set_wheel_circumference(2.075)  # 26-inch wheel circumference in meters
+speed_controller.set_calibration_from_wheel_rpm(48.28, 388)  # 30 mph at 388 wheel RPM
+
+# Initialize view (handles all display logic - MVC pattern)
+# View class centralizes all display rendering, separating presentation from business logic
+back_col = 0
+view = View(LCD, ColorHelper.rgb_color, back_col, 
+            speed_controller=speed_controller,
+            gear_selector=gear_selector,
+            load_controller=load_controller,
+            screen_width=LCD.width,
+            screen_height=LCD.height)
+
+# Initialize button controller (handles all button inputs - MVC pattern)
+button_controller = ButtonController(
+    speed_controller=speed_controller,
+    load_controller=load_controller,
+    gear_selector=gear_selector,
+    view=view,
+    incline_step=5.0,
+    max_incline=100.0,
+    min_incline=-100.0
+)
+
 pwm = PWM(Pin(LCD.BL)) # Screen Brightness
 pwm.freq(1000)
 pwm.duty_u16(65535) # Full brightness
-back_col = 0
-
-# Incline control constants
-INCLINE_STEP = 5.0  # Change incline by 5% per button press
-MAX_INCLINE = 100.0  # Maximum incline (100%)
-MIN_INCLINE = -100.0  # Maximum decline (-100%)
 
 # =========== Main ============
 
 # Background color - black
 LCD.fill(ColorHelper.rgb_color(0,0,0))
-# Initial display of all components
-speed_sensor.update_display(LCD, ColorHelper.rgb_color, back_col)
-gear_selector.update_display(LCD, ColorHelper.rgb_color, back_col)
 # Apply initial load based on starting gear
 load_controller.apply_load()
-LCD.show()
-
-# Define pins for buttons and Joystick
-keyA = Pin(15,Pin.IN,Pin.PULL_UP) # Normally 1 but 0 if pressed
-keyB = Pin(17,Pin.IN,Pin.PULL_UP)
-keyX = Pin(19,Pin.IN,Pin.PULL_UP)
-keyY= Pin(21,Pin.IN,Pin.PULL_UP)
-
-up = Pin(2,Pin.IN,Pin.PULL_UP)
-down = Pin(18,Pin.IN,Pin.PULL_UP)
-left = Pin(16,Pin.IN,Pin.PULL_UP)
-right = Pin(20,Pin.IN,Pin.PULL_UP)
-ctrl = Pin(3,Pin.IN,Pin.PULL_UP)
+# Initial display of all components
+view.render_all()
 
 LCD.show()
-
-running = True # Loop control
 
 # Display update timing - update 4 times per second (every 250ms)
 display_update_interval_ms = 250
 last_display_update_time = utime.ticks_ms()
 
 # =========== Main loop ===============
-while(running):
-    if keyA.value() == 0 and keyY.value() != 0:
-        # Toggle speed unit between kmph and mph (only if keyY is not pressed)
-        new_unit = speed_sensor.toggle_unit()
-        # Clear screen before redrawing
-        LCD.fill(back_col)
-        # Force immediate display update with new unit
-        speed_sensor.update_display(LCD, ColorHelper.rgb_color, back_col)
-        gear_selector.update_display(LCD, ColorHelper.rgb_color, back_col)
-        LCD.show()
-        last_display_update_time = utime.ticks_ms()  # Reset timer
-        utime.sleep_ms(200)  # Debounce delay
-
-    if keyB.value() == 0:
-        # Toggle simulated RPM on/off
-        is_enabled = speed_sensor.toggle_simulated_rpm()
-        # Force immediate display update
-        LCD.fill(back_col)
-        speed_sensor.update_display(LCD, ColorHelper.rgb_color, back_col)
-        gear_selector.update_display(LCD, ColorHelper.rgb_color, back_col)
-        LCD.show()
-        last_display_update_time = utime.ticks_ms()  # Reset timer
-        utime.sleep_ms(200)  # Debounce delay
-
-    if keyX.value() == 0:
-        # Increase simulated RPM by 10
-        speed_sensor.adjust_rpm(10)
-        # Force immediate display update
-        LCD.fill(back_col)
-        speed_sensor.update_display(LCD, ColorHelper.rgb_color, back_col)
-        gear_selector.update_display(LCD, ColorHelper.rgb_color, back_col)
-        LCD.show()
-        last_display_update_time = utime.ticks_ms()  # Reset timer
-        utime.sleep_ms(200)  # Debounce delay
-
-    if keyY.value() == 0 and keyA.value() != 0:
-        # Decrease simulated RPM by 10
-        speed_sensor.adjust_rpm(-10)
-        # Force immediate display update
-        LCD.fill(back_col)
-        speed_sensor.update_display(LCD, ColorHelper.rgb_color, back_col)
-        gear_selector.update_display(LCD, ColorHelper.rgb_color, back_col)
-        LCD.show()
-        last_display_update_time = utime.ticks_ms()  # Reset timer
-        utime.sleep_ms(200)  # Debounce delay
-
-    if up.value() == 0:
-        # Increase incline (uphill)
-        current_incline = load_controller.get_incline()
-        new_incline = min(current_incline + INCLINE_STEP, MAX_INCLINE)
-        load_controller.set_incline(new_incline)
-        # Clear screen and redraw all displays
-        LCD.fill(back_col)
-        speed_sensor.update_display(LCD, ColorHelper.rgb_color, back_col)
-        gear_selector.update_display(LCD, ColorHelper.rgb_color, back_col)
-        LCD.show()
-        last_display_update_time = utime.ticks_ms()  # Reset timer
-        utime.sleep_ms(200)  # Debounce delay
-
-    if down.value() == 0:
-        # Decrease incline (downhill)
-        current_incline = load_controller.get_incline()
-        new_incline = max(current_incline - INCLINE_STEP, MIN_INCLINE)
-        load_controller.set_incline(new_incline)
-        # Clear screen and redraw all displays
-        LCD.fill(back_col)
-        speed_sensor.update_display(LCD, ColorHelper.rgb_color, back_col)
-        gear_selector.update_display(LCD, ColorHelper.rgb_color, back_col)
-        LCD.show()
-        last_display_update_time = utime.ticks_ms()  # Reset timer
-        utime.sleep_ms(200)  # Debounce delay
-
-    if left.value() == 0:
-        # Decrement gear
-        if gear_selector.decrement_gear():
-            # Update load based on new gear
-            load_controller.apply_load()
-            # Clear screen and redraw all displays
-            LCD.fill(back_col)
-            speed_sensor.update_display(LCD, ColorHelper.rgb_color, back_col)
-            gear_selector.update_display(LCD, ColorHelper.rgb_color, back_col)
-            LCD.show()
-            last_display_update_time = utime.ticks_ms()  # Reset timer
-            utime.sleep_ms(200)  # Debounce delay
-
-    if right.value() == 0:
-        # Increment gear
-        if gear_selector.increment_gear():
-            # Update load based on new gear
-            load_controller.apply_load()
-            # Clear screen and redraw all displays
-            LCD.fill(back_col)
-            speed_sensor.update_display(LCD, ColorHelper.rgb_color, back_col)
-            gear_selector.update_display(LCD, ColorHelper.rgb_color, back_col)
-            LCD.show()
-            last_display_update_time = utime.ticks_ms()  # Reset timer
-            utime.sleep_ms(200)  # Debounce delay
-
-    #if (ctrl.value() == 0):
-        #print("CTRL")
-
-    # Read current speed (needed for display, but don't use for conditional updates)
-    speed_sensor.read_speed()
+while True:
+    # Check all buttons and handle actions
+    # ButtonController handles all button logic, debouncing, and action dispatching
+    button_controller.check_buttons()
     
     # Continuously update load to adjust motor position towards target
     # This ensures the motor moves to the correct position based on gear and incline
     load_controller.apply_load()
     
     # Update display 4 times per second (every 250ms)
+    # View class handles all display rendering (MVC pattern)
     current_time = utime.ticks_ms()
     if utime.ticks_diff(current_time, last_display_update_time) >= display_update_interval_ms:
-        # Clear screen before redrawing
-        LCD.fill(back_col)
-        # Redraw all displays
-        speed_sensor.update_display(LCD, ColorHelper.rgb_color, back_col)
-        gear_selector.update_display(LCD, ColorHelper.rgb_color, back_col)
-        LCD.show()
+        # Redraw all displays using View class
+        view.render_all()
         last_display_update_time = current_time
 
-    if (keyA.value() == 0) and (keyY.value() == 0): # Halt looping?
-        running = False
-
-    utime.sleep_us(200) # Debounce delay 
-
-# Finish
-LCD.fill(0)
-LCD.text("Halted", 95, 115, ColorHelper.rgb_color(255,0,0))
-LCD.show()
-
-# Tidy up
-utime.sleep(3)
-LCD.fill(0)
-LCD.show()
+    utime.sleep_us(200)  # Small delay to prevent tight loop
 
 
 

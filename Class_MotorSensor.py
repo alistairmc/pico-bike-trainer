@@ -8,14 +8,12 @@ class MotorSensor:
     Uses GPIO pins with interrupt handlers to count rotations when pins go high.
     """
     
-    def __init__(self, motor_count_gpio_pin=0, motor_stop_gpio_pin=1, screen_width=240, screen_height=240):
+    def __init__(self, motor_count_gpio_pin=0, motor_stop_gpio_pin=1):
         """Initialize the motor sensor.
         
         Args:
             motor_count_gpio_pin: GPIO pin number for the motor hall sensor (default: 0).
             motor_stop_gpio_pin: GPIO pin number for the motor stop trigger (default: 1).
-            screen_width: Width of the display screen in pixels (default: 240).
-            screen_height: Height of the display screen in pixels (default: 240).
         """
         self.motor_count_gpio_pin = motor_count_gpio_pin
         self.motor_stop_gpio_pin = motor_stop_gpio_pin
@@ -24,8 +22,6 @@ class MotorSensor:
         self.motor_rotations_per_motor_crank = 1000  # 1000 motor rotations = 1 full motor crank rotation
         self.motor_crank_position = 0  # Motor crank position (0-1000, representing 0-360 degrees)
         self.motor_direction = 1  # 1 = forward (increment), -1 = reverse (decrement)
-        self.screen_width = screen_width
-        self.screen_height = screen_height
         
         # Set up interrupt handler for motor pulse counting
         # Use both rising and falling edges for better resolution on fast pulses
@@ -198,52 +194,3 @@ class MotorSensor:
         """Set motor direction to reverse (counts decrement)."""
         self.motor_direction = -1
     
-    def update_display(self, lcd, rgb_color_func, back_col, start_y=None):
-        """Update the motor and motor crank count display on the LCD.
-        
-        Args:
-            lcd: LCD display object to update.
-            rgb_color_func: Function to convert RGB values to display color.
-            back_col: Background color for the display area.
-            start_y: Starting Y position for display (default: None, will calculate from screen height).
-        """
-        # Calculate starting position if not provided
-        if start_y is None:
-            start_y = self.screen_height - 60  # Default to bottom area
-        
-        # Get current counts
-        motor_pulse_count = self.get_pulse_count()
-        motor_crank_pulse_count = self.get_motor_crank_count()
-        
-        # Font settings
-        char_width_base = 8
-        font_size = 2
-        char_width = char_width_base * font_size
-        line_spacing = 18
-        
-        # Display motor count
-        motor_text = "Motor: " + str(motor_pulse_count)
-        motor_text_width = len(motor_text) * char_width
-        motor_x = (self.screen_width - motor_text_width) // 2
-        motor_y = start_y
-        
-        # Display motor crank count below motor count
-        motor_crank_text = "MCrank: " + str(motor_crank_pulse_count)
-        motor_crank_text_width = len(motor_crank_text) * char_width
-        motor_crank_x = (self.screen_width - motor_crank_text_width) // 2
-        motor_crank_y = motor_y + line_spacing
-        
-        # Color for text
-        text_color = rgb_color_func(200, 200, 200)
-        
-        # Clear display area (enough for 2 lines)
-        display_height = line_spacing * 2 + 10
-        lcd.fill_rect(0, motor_y, self.screen_width, display_height, back_col)
-        
-        # Display motor count
-        if text_color is not None and motor_x is not None and motor_y is not None:
-            lcd.write_text(motor_text, int(motor_x), int(motor_y), font_size, int(text_color))
-        
-        # Display motor crank count
-        if text_color is not None and motor_crank_x is not None and motor_crank_y is not None:
-            lcd.write_text(motor_crank_text, int(motor_crank_x), int(motor_crank_y), font_size, int(text_color))

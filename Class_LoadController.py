@@ -11,7 +11,7 @@ class LoadController:
     Uses direction control only (no speed control).
     """
     
-    def __init__(self, l298n_in1_pin, l298n_in2_pin, gear_selector=None, base_load_factor=1.0, motor_sensor=None):
+    def __init__(self, l298n_in1_pin, l298n_in2_pin, gear_selector=None, base_load_factor=1.0, motor_sensor=None, lcd=None, rgb_color_func=None):
         """Initialize the load controller.
         
         Args:
@@ -20,6 +20,8 @@ class LoadController:
             gear_selector: GearSelector instance to get current gear ratio (default: None).
             base_load_factor: Base load multiplier for gear resistance (default: 1.0).
             motor_sensor: MotorSensor instance to track motor crank position (default: None).
+            lcd: LCD display object for calibration status (default: None).
+            rgb_color_func: Function to convert RGB values to display color (default: None).
         """
         # L298N motor controller pins (direction control only, no speed control)
         self.l298n_in1_pin = Pin(l298n_in1_pin, Pin.OUT)
@@ -31,6 +33,8 @@ class LoadController:
         self.gear_selector = gear_selector
         self.motor_sensor = motor_sensor
         self.base_load_factor = base_load_factor
+        self.lcd = lcd
+        self.rgb_color_func = rgb_color_func
         
         # Motor control state
         self.current_direction = None  # None = stopped, True = forward (increase load), False = reverse (decrease load)
@@ -42,7 +46,68 @@ class LoadController:
         self.motor_run_time_ms = 100  # Time to run motor when adjusting load (milliseconds)
         self.min_load_update_interval_ms = 150  # Minimum time between load updates (allow position to update)
     
-    def _wait_for_stop_trigger(self, timeout_ms=120000):
+    def _display_calibration_status(self, status_text, detail_text=None):
+        """Display calibration status on the LCD if available.
+        
+        Args:
+            status_text: Main status message to display.
+            detail_text: Optional detail message to display below main status.
+        """
+        if self.lcd is None or self.rgb_color_func is None:
+            return  # No display available
+        
+        # Clear the entire screen
+        self.lcd.fill(0)  # Black background
+        
+        # Calculate text positions (centered)
+        text_color = self.rgb_color_func(255, 255, 255)  # White text
+        title_color = self.rgb_color_func(255, 200, 0)  # Yellow/orange for title
+        
+        # Title
+        title = "CALIBRATION"
+        title_size = 3
+        title_char_width = 8 * title_size
+        title_width = len(title) * title_char_width
+        title_x = max(0, (240 - title_width) // 2)
+        title_y = 20
+        
+        try:
+            if title_color is not None:
+                self.lcd.write_text(title, int(title_x), title_y, title_size, int(title_color))
+        except (TypeError, ValueError, AttributeError):
+            pass
+        
+        # Main status text
+        status_size = 2
+        status_char_width = 8 * status_size
+        status_width = len(status_text) * status_char_width
+        status_x = max(0, (240 - status_width) // 2)
+        status_y = 80
+        
+        try:
+            if text_color is not None:
+                self.lcd.write_text(status_text, int(status_x), status_y, status_size, int(text_color))
+        except (TypeError, ValueError, AttributeError):
+            pass
+        
+        # Detail text (if provided)
+        if detail_text:
+            detail_size = 2
+            detail_char_width = 8 * detail_size
+            detail_width = len(detail_text) * detail_char_width
+            detail_x = max(0, (240 - detail_width) // 2)
+            detail_y = 120
+            
+            try:
+                if text_color is not None:
+                    self.lcd.write_text(detail_text, int(detail_x), detail_y, detail_size, int(text_color))
+            except (TypeError, ValueError, AttributeError):
+                pass
+        
+        # Show the display
+        self.lcd.show()
+    
+    def _wait_for_stop_trigger(self, timeout_ms=600000):
         """Wait for motor stop trigger and stop at start of pulse.
         
         The stop trigger has a wide pulse, so we:
@@ -86,7 +151,13 @@ class LoadController:
         Moves motor to stop position (0 degrees) on startup.
         """
         if self.motor_sensor is None:
+            print("Startup ERROR: Motor sensor not initialized")
+            self._display_calibration_status("ERROR", "No motor sensor")
             return  # Can't proceed without motor sensor
+        
+        # Clear display and show initial status
+        self._display_calibration_status("Initializing...", "Checking sensors")
+        utime.sleep_ms(500)  # Brief pause to show message
         
         # Ensure motor_rotations_per_motor_crank is set to 1000 (should already be default)
         self.motor_sensor.motor_rotations_per_motor_crank = 1000
@@ -95,14 +166,25 @@ class LoadController:
         self.motor_sensor.disable_stop_interrupt()
         
         print("Startup: Moving to stop position...")
+        print(f"Startup: Initial GPIO 0 (motor count) state: {self.motor_sensor.motor_rpm_pin.value()}")
+        print(f"Startup: Initial GPIO 1 (motor stop) state: {self.motor_sensor.motor_stop_pin.value()}")
+        print(f"Startup: Initial pulse count: {self.motor_sensor.motor_pulse_count}")
+        
+        self._display_calibration_status("Starting...", "Moving to stop")
         
         # Check if motor is already at stop position
         initial_stop_state = self.motor_sensor.motor_stop_pin.value() == 1
         
         if initial_stop_state:
             print("Startup: Motor already at stop position, moving back first...")
+            self._display_calibration_status("Step 1/2", "Moving away from stop")
             # Motor is already at stop, move it back (reverse) until not in stop position
             self.set_motor_direction_reverse()
+            
+            # Monitor if motor is actually moving by checking pulse count
+            initial_pulse_count = self.motor_sensor.motor_pulse_count
+            last_pulse_check_time = utime.ticks_ms()
+            pulse_check_interval = 2000  # Check every 2 seconds
             
             # Wait for pin to go LOW (move off stop position)
             debounce_count = 0
@@ -111,11 +193,31 @@ class LoadController:
             start_time = utime.ticks_ms()
             
             while debounce_count < required_low_readings:
-                if utime.ticks_diff(utime.ticks_ms(), start_time) > timeout_ms:
-                    print("Startup warning: Could not move off stop position")
+                elapsed = utime.ticks_diff(utime.ticks_ms(), start_time)
+                if elapsed > timeout_ms:
+                    print(f"Startup ERROR: Could not move off stop position after {elapsed}ms")
+                    print(f"Startup: Final pulse count: {self.motor_sensor.motor_pulse_count} (was {initial_pulse_count})")
+                    if self.motor_sensor.motor_pulse_count == initial_pulse_count:
+                        print("Startup ERROR: Motor sensor (GPIO 0) not detecting any pulses!")
+                        print("Startup: Check motor sensor connections and alignment")
+                        self._display_calibration_status("ERROR", "Sensor not working")
+                    else:
+                        self._display_calibration_status("ERROR", "Timeout moving")
                     self.stop_motor()
                     self.motor_sensor.enable_stop_interrupt()
                     return
+                
+                # Check if motor is moving (pulses detected)
+                if utime.ticks_diff(utime.ticks_ms(), last_pulse_check_time) >= pulse_check_interval:
+                    current_pulses = self.motor_sensor.motor_pulse_count
+                    if current_pulses == initial_pulse_count:
+                        print(f"Startup WARNING: No motor pulses detected after {elapsed}ms - motor may be stuck or sensor not working")
+                        self._display_calibration_status("Step 1/2", "No pulses detected!")
+                    else:
+                        print(f"Startup: Motor moving - {current_pulses - initial_pulse_count} pulses detected")
+                        pulse_count = current_pulses - initial_pulse_count
+                        self._display_calibration_status("Step 1/2", f"Moving: {pulse_count} pulses")
+                    last_pulse_check_time = utime.ticks_ms()
                 
                 pin_value = self.motor_sensor.motor_stop_pin.value()
                 if pin_value == 0:  # LOW - moved off stop
@@ -126,6 +228,7 @@ class LoadController:
                 utime.sleep_ms(10)
             
             # Continue moving a bit more to ensure we're clear of the stop
+            print("Startup: Moving additional 2 seconds to clear stop position...")
             utime.sleep_ms(2000)  # Move for additional 2000ms (2 seconds)
             self.stop_motor()
             utime.sleep_ms(200)
@@ -136,13 +239,64 @@ class LoadController:
             print("Startup: Moved off stop position, counts reset, now moving forward to find stop trigger...")
         
         # Move motor forward until stop trigger is detected
+        print("Startup: Moving forward to find stop trigger...")
+        self._display_calibration_status("Step 2/2", "Finding stop position")
         self.set_motor_direction_forward()
         
-        if not self._wait_for_stop_trigger(timeout_ms=120000):
-            print("Startup timeout: Stop trigger not detected")
-            self.stop_motor()
-            self.motor_sensor.enable_stop_interrupt()
-            return
+        # Monitor motor movement while waiting for stop trigger
+        initial_pulse_count = self.motor_sensor.motor_pulse_count
+        last_pulse_check_time = utime.ticks_ms()
+        pulse_check_interval = 5000  # Check every 5 seconds
+        
+        # Modified wait function with movement monitoring
+        debounce_count = 0
+        required_high_readings = 10
+        timeout_ms = 600000  # 10 minute timeout to allow for up to 1000 motor rotations
+        start_time = utime.ticks_ms()
+        
+        while debounce_count < required_high_readings:
+            elapsed = utime.ticks_diff(utime.ticks_ms(), start_time)
+            if elapsed > timeout_ms:
+                print(f"Startup ERROR: Stop trigger not detected after {elapsed}ms")
+                print(f"Startup: Final pulse count: {self.motor_sensor.motor_pulse_count} (was {initial_pulse_count})")
+                if self.motor_sensor.motor_pulse_count == initial_pulse_count:
+                    print("Startup ERROR: Motor sensor (GPIO 0) not detecting any pulses!")
+                    print("Startup: Check motor sensor connections and alignment")
+                    self._display_calibration_status("ERROR", "Sensor not working")
+                else:
+                    print("Startup ERROR: Motor stop trigger (GPIO 1) not detected!")
+                    print("Startup: Check stop sensor connections and alignment")
+                    self._display_calibration_status("ERROR", "Stop trigger failed")
+                self.stop_motor()
+                self.motor_sensor.enable_stop_interrupt()
+                return
+            
+            # Check if motor is moving (pulses detected)
+            if utime.ticks_diff(utime.ticks_ms(), last_pulse_check_time) >= pulse_check_interval:
+                current_pulses = self.motor_sensor.motor_pulse_count
+                pulse_diff = current_pulses - initial_pulse_count
+                if pulse_diff == 0:
+                    print(f"Startup WARNING: No motor pulses detected after {elapsed}ms - motor may be stuck or sensor not working")
+                    self._display_calibration_status("Step 2/2", "No pulses detected!")
+                else:
+                    print(f"Startup: Motor moving - {pulse_diff} pulses detected, elapsed: {elapsed}ms")
+                    self._display_calibration_status("Step 2/2", f"Moving: {pulse_diff} pulses")
+                last_pulse_check_time = utime.ticks_ms()
+            
+            pin_value = self.motor_sensor.motor_stop_pin.value()
+            if pin_value == 1:  # HIGH - pulse started
+                debounce_count += 1
+            else:
+                debounce_count = 0
+            
+            utime.sleep_ms(10)
+        
+        # Stop trigger detected
+        elapsed = utime.ticks_ms() - start_time
+        final_pulses = self.motor_sensor.motor_pulse_count
+        print(f"Startup: Stop trigger detected after {elapsed}ms, {final_pulses - initial_pulse_count} pulses")
+        
+        self._display_calibration_status("Complete!", "Stopping motor")
         
         # Stop motor at start of stop pulse
         self.stop_motor()
@@ -155,6 +309,8 @@ class LoadController:
         self.motor_sensor.enable_stop_interrupt()
         
         print("Startup: Motor at stop position, ready")
+        self._display_calibration_status("Ready!", "Calibration complete")
+        utime.sleep_ms(1000)  # Show completion message for 1 second
     
     def set_incline(self, incline_percent):
         """Set the incline/decline percentage.
