@@ -24,6 +24,7 @@ class CrankSensor:
         self.crpm_pulse_times = []  # Store extended pulse times for CRPM calculation (10 second window)
         self.sample_window_ms = 5000  # 5 second window for RPM calculation
         self.crpm_sample_window_ms = 10000  # 10 second window for CRPM calculation (allows low RPM detection)
+        self.max_pulse_times = 1000  # Maximum number of pulse times to store (memory protection)
         
         self.hall_sensor = Pin(gpio_pin, Pin.IN, Pin.PULL_UP)
         # Note: GPIO reads pedal speed (cadence), not wheel speed
@@ -45,6 +46,13 @@ class CrankSensor:
         self.last_pulse_time = current_time
         self.pulse_times.append(current_time)
         self.crpm_pulse_times.append(current_time)  # Also add to extended window for CRPM
+        
+        # Memory protection: limit list size
+        if len(self.pulse_times) > self.max_pulse_times:
+            self.pulse_times = self.pulse_times[-self.max_pulse_times:]
+        if len(self.crpm_pulse_times) > self.max_pulse_times:
+            self.crpm_pulse_times = self.crpm_pulse_times[-self.max_pulse_times:]
+        
         # Keep only pulses within the sample window (for speed calculation)
         cutoff_time = current_time - self.sample_window_ms
         self.pulse_times = [t for t in self.pulse_times if t > cutoff_time]

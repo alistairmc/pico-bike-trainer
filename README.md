@@ -274,8 +274,25 @@ The Pico Bike Trainer is a smart bike trainer system that:
 1. **Clone or download this repository**
 
 2. **Upload files to Raspberry Pi Pico**:
-   - Copy all `.py` files to the Pico
-   - Ensure `main.py` is in the root directory
+   
+   **Important:** When uploading files to the Pico, exclude the following:
+   - Files starting with a dot (`.`) - hidden files like `.git`, `.vscode`, `.DS_Store`, etc.
+   - Documentation files (`.md` files except `README.md`)
+   - Test files (`test_*.py`)
+   - IDE/editor files (`.code-workspace`, `.vscode/`, `.idea/`)
+   - Build/cache files (`__pycache__/`, `.mypy_cache/`, etc.)
+   - CMake files (`*.cmake`, `pico_sdk_import.cmake`)
+   - License file (`LICENSE`)
+   
+   **Upload Tools:**
+   - **Thonny IDE**: Automatically uses `.thonnyignore` file (already created)
+   - **PyMakr/rshell**: Can use `.picoignore` file (already created)
+   - **Manual upload**: Only upload `.py` files and `main.py`
+   
+   **Files to upload:**
+   - `main.py` (required)
+   - `Class_*.py` (all class files)
+   - `README.md` (optional, for reference)
 
 3. **Hardware Connections**:
    - Connect LCD display to GPIO pins 8-13

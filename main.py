@@ -1,11 +1,7 @@
 # WaceShare Library code
 # Alistair Mcgranaghan 24/09/2022
-from machine import Pin,SPI,PWM
-import machine
-import framebuf
+from machine import Pin, PWM
 import utime
-import os
-import math
 from Class_LCD1Inch3 import LCD1Inch3 as LCD_Driver_Class
 from Class_CrankSensor import CrankSensor
 from Class_WheelSpeedSensor import WheelSpeedSensor
@@ -17,90 +13,166 @@ from Class_ColorHelper import ColorHelper
 from Class_View import View
 from Class_ButtonController import ButtonController
 
-# Global values
-LCD = LCD_Driver_Class()
-gear_selector = GearSelector(num_gears=7, min_ratio=1.0, max_ratio=4.5)
-motor_sensor = MotorSensor(motor_count_gpio_pin=0, motor_stop_gpio_pin=1)  # Motor RPM sensor on GPIO pin 0, Motor stop trigger on GPIO pin 1
-load_controller = LoadController(l298n_in1_pin=5, l298n_in2_pin=6, gear_selector=gear_selector, motor_sensor=motor_sensor, lcd=LCD, rgb_color_func=ColorHelper.rgb_color)  # L298N motor control pins
+# =========== Configuration Constants ===========
+# Motor configuration
+MOTOR_COUNT_GPIO_PIN = 0
+MOTOR_STOP_GPIO_PIN = 1
+L298N_IN1_PIN = 5
+L298N_IN2_PIN = 6
 
-# Perform startup calibration: move to bottom position, then to top position (180 degrees)
-load_controller.startup_calibration()
+# Sensor GPIO pins
+CRANK_SENSOR_GPIO = 7
+WHEEL_SPEED_SENSOR_GPIO = 4
 
-# Crank sensor (measures pedal/crank speed - returns RPM only)
-crank_sensor = CrankSensor(gpio_pin=7)
+# Gear configuration
+NUM_GEARS = 7
+MIN_GEAR_RATIO = 1.0
+MAX_GEAR_RATIO = 4.5
 
-# Wheel speed sensor (measures flywheel/wheel speed directly - returns RPM only)
-wheel_speed_sensor = WheelSpeedSensor(gpio_pin=4)
+# Wheel configuration
+WHEEL_CIRCUMFERENCE_M = 2.075  # 26-inch wheel circumference in meters
+CALIBRATION_SPEED_KMH = 48.28  # Known speed for calibration
+CALIBRATION_WHEEL_RPM = 388  # Wheel RPM at known speed
 
-# Speed controller (manages all speed calculations)
-speed_controller = SpeedController(
-    crank_sensor=crank_sensor,
-    wheel_speed_sensor=wheel_speed_sensor,
-    gear_selector=gear_selector,
-    load_controller=load_controller
-)
-speed_controller.set_wheel_circumference(2.075)  # 26-inch wheel circumference in meters
-speed_controller.set_calibration_from_wheel_rpm(48.28, 388)  # 30 mph at 388 wheel RPM
+# Button configuration
+INCLINE_STEP = 5.0
+MAX_INCLINE = 100.0
+MIN_INCLINE = -100.0
 
-# Initialize view (handles all display logic - MVC pattern)
-# View class centralizes all display rendering, separating presentation from business logic
-back_col = 0
-view = View(LCD, ColorHelper.rgb_color, back_col, 
-            speed_controller=speed_controller,
-            gear_selector=gear_selector,
-            load_controller=load_controller,
-            screen_width=LCD.width,
-            screen_height=LCD.height)
+# Display configuration
+DISPLAY_UPDATE_INTERVAL_MS = 250  # Update 4 times per second
+MAIN_LOOP_SLEEP_US = 200  # Small delay to prevent tight loop
+CALIBRATION_DELAY_SEC = 3  # Wait before starting calibration
 
-# Initialize button controller (handles all button inputs - MVC pattern)
-button_controller = ButtonController(
-    speed_controller=speed_controller,
-    load_controller=load_controller,
-    gear_selector=gear_selector,
-    view=view,
-    incline_step=5.0,
-    max_incline=100.0,
-    min_incline=-100.0
-)
+# Error handling configuration
+ERROR_RETRY_DELAY_MS = 1000  # Delay after error before retry
+MAX_CONSECUTIVE_ERRORS = 10  # Maximum consecutive errors before giving up
 
-pwm = PWM(Pin(LCD.BL)) # Screen Brightness
-pwm.freq(1000)
-pwm.duty_u16(65535) # Full brightness
-
-# =========== Main ============
-
-# Background color - black
-LCD.fill(ColorHelper.rgb_color(0,0,0))
-# Apply initial load based on starting gear
-load_controller.apply_load()
-# Initial display of all components
-view.render_all()
-
-LCD.show()
-
-# Display update timing - update 4 times per second (every 250ms)
-display_update_interval_ms = 250
-last_display_update_time = utime.ticks_ms()
-
-# =========== Main loop ===============
-while True:
-    # Check all buttons and handle actions
-    # ButtonController handles all button logic, debouncing, and action dispatching
-    button_controller.check_buttons()
+# =========== Initialization ===========
+try:
+    LCD = LCD_Driver_Class()
+    gear_selector = GearSelector(num_gears=NUM_GEARS, min_ratio=MIN_GEAR_RATIO, max_ratio=MAX_GEAR_RATIO)
+    motor_sensor = MotorSensor(motor_count_gpio_pin=MOTOR_COUNT_GPIO_PIN, motor_stop_gpio_pin=MOTOR_STOP_GPIO_PIN)
+    load_controller = LoadController(
+        l298n_in1_pin=L298N_IN1_PIN,
+        l298n_in2_pin=L298N_IN2_PIN,
+        gear_selector=gear_selector,
+        motor_sensor=motor_sensor,
+        lcd=LCD,
+        rgb_color_func=ColorHelper.rgb_color
+    )
     
-    # Continuously update load to adjust motor position towards target
-    # This ensures the motor moves to the correct position based on gear and incline
+    # Wait before starting calibration
+    utime.sleep(CALIBRATION_DELAY_SEC)
+    
+    # Perform startup calibration: move to bottom position, then to top position (180 degrees)
+    load_controller.startup_calibration()
+    
+    # Crank sensor (measures pedal/crank speed - returns RPM only)
+    crank_sensor = CrankSensor(gpio_pin=CRANK_SENSOR_GPIO)
+    
+    # Wheel speed sensor (measures flywheel/wheel speed directly - returns RPM only)
+    wheel_speed_sensor = WheelSpeedSensor(gpio_pin=WHEEL_SPEED_SENSOR_GPIO)
+    
+    # Speed controller (manages all speed calculations)
+    speed_controller = SpeedController(
+        crank_sensor=crank_sensor,
+        wheel_speed_sensor=wheel_speed_sensor,
+        gear_selector=gear_selector,
+        load_controller=load_controller
+    )
+    speed_controller.set_wheel_circumference(WHEEL_CIRCUMFERENCE_M)
+    speed_controller.set_calibration_from_wheel_rpm(CALIBRATION_SPEED_KMH, CALIBRATION_WHEEL_RPM)
+    
+    # Initialize view (handles all display logic - MVC pattern)
+    back_col = 0
+    view = View(
+        LCD, ColorHelper.rgb_color, back_col,
+        speed_controller=speed_controller,
+        gear_selector=gear_selector,
+        load_controller=load_controller,
+        screen_width=LCD.width,
+        screen_height=LCD.height
+    )
+    
+    # Initialize button controller (handles all button inputs - MVC pattern)
+    button_controller = ButtonController(
+        speed_controller=speed_controller,
+        load_controller=load_controller,
+        gear_selector=gear_selector,
+        view=view,
+        incline_step=INCLINE_STEP,
+        max_incline=MAX_INCLINE,
+        min_incline=MIN_INCLINE
+    )
+    
+    # Screen brightness
+    pwm = PWM(Pin(LCD.BL))
+    pwm.freq(1000)
+    pwm.duty_u16(65535)  # Full brightness
+    
+    # Initialize display
+    LCD.fill(ColorHelper.rgb_color(0, 0, 0))
     load_controller.apply_load()
-    
-    # Update display 4 times per second (every 250ms)
-    # View class handles all display rendering (MVC pattern)
-    current_time = utime.ticks_ms()
-    if utime.ticks_diff(current_time, last_display_update_time) >= display_update_interval_ms:
-        # Redraw all displays using View class
-        view.render_all()
-        last_display_update_time = current_time
+    view.render_all()
+    LCD.show()
 
-    utime.sleep_us(200)  # Small delay to prevent tight loop
+except Exception as e:
+    print(f"FATAL ERROR during initialization: {e}")
+    # Try to show error on display if possible
+    try:
+        LCD.fill(0)
+        LCD.write_text("INIT ERROR", 50, 100, 2, ColorHelper.rgb_color(255, 0, 0))
+        LCD.show()
+    except:
+        pass
+    # Halt execution
+    while True:
+        utime.sleep_ms(1000)
+
+# =========== Main Loop ===========
+last_display_update_time = utime.ticks_ms()
+consecutive_errors = 0
+
+while True:
+    try:
+        # Check all buttons and handle actions
+        button_controller.check_buttons()
+        
+        # Continuously update load to adjust motor position towards target
+        load_controller.apply_load()
+        
+        # Update display at configured interval
+        current_time = utime.ticks_ms()
+        if utime.ticks_diff(current_time, last_display_update_time) >= DISPLAY_UPDATE_INTERVAL_MS:
+            view.render_all()
+            last_display_update_time = current_time
+        
+        # Reset error counter on successful iteration
+        consecutive_errors = 0
+        
+        utime.sleep_us(MAIN_LOOP_SLEEP_US)
+        
+    except Exception as e:
+        consecutive_errors += 1
+        print(f"Error in main loop (count: {consecutive_errors}): {e}")
+        
+        # If too many consecutive errors, try to show error and halt
+        if consecutive_errors >= MAX_CONSECUTIVE_ERRORS:
+            print("Too many consecutive errors - halting")
+            try:
+                LCD.fill(0)
+                LCD.write_text("SYSTEM ERROR", 30, 100, 2, ColorHelper.rgb_color(255, 0, 0))
+                LCD.show()
+                load_controller.stop_motor()  # Ensure motor is stopped
+            except:
+                pass
+            # Halt execution
+            while True:
+                utime.sleep_ms(1000)
+        
+        # Wait before retrying
+        utime.sleep_ms(ERROR_RETRY_DELAY_MS)
 
 
 

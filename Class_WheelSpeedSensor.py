@@ -22,6 +22,7 @@ class WheelSpeedSensor:
         self.last_pulse_time = 0
         self.pulse_times = []  # Store recent pulse times for RPM calculation
         self.sample_window_ms = 5000  # 5 second window for RPM calculation
+        self.max_pulse_times = 1000  # Maximum number of pulse times to store (memory protection)
         
         self.hall_sensor = Pin(gpio_pin, Pin.IN, Pin.PULL_UP)
         # Sensor is normally OFF (LOW) and goes HIGH when triggered
@@ -41,6 +42,11 @@ class WheelSpeedSensor:
         self.pulse_count += 1
         self.last_pulse_time = current_time
         self.pulse_times.append(current_time)
+        
+        # Memory protection: limit list size
+        if len(self.pulse_times) > self.max_pulse_times:
+            self.pulse_times = self.pulse_times[-self.max_pulse_times:]
+        
         # Keep only pulses within the sample window
         cutoff_time = current_time - self.sample_window_ms
         self.pulse_times = [t for t in self.pulse_times if t > cutoff_time]

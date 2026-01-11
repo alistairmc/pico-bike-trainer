@@ -118,6 +118,11 @@ class SpeedController:
             # Get wheel RPM from sensor
             wheel_rpm = self.wheel_speed_sensor.get_rpm()
             
+            # Protect against division by zero
+            if self.fixed_gear_adjustment <= 0:
+                # Use safe default if adjustment is invalid
+                self.fixed_gear_adjustment = 1.0
+            
             # Divide by fixed_gear_adjustment before applying gear ratio
             adjusted_wheel_rpm = wheel_rpm / self.fixed_gear_adjustment
             
@@ -157,7 +162,16 @@ class SpeedController:
                                 For a 26-inch wheel: ~2.075 meters
                                 For a 700c wheel: ~2.1 meters
         """
-        self.wheel_circumference = circumference_meters
+        # Input validation
+        if not isinstance(circumference_meters, (int, float)):
+            print(f"Warning: Invalid circumference_meters type: {type(circumference_meters)}. Using default 2.075")
+            circumference_meters = 2.075
+        
+        if circumference_meters <= 0:
+            print(f"Warning: circumference_meters must be > 0. Got {circumference_meters}. Using default 2.075")
+            circumference_meters = 2.075
+        
+        self.wheel_circumference = float(circumference_meters)
     
     def set_calibration_from_wheel_rpm(self, known_speed_kmh, known_wheel_rpm):
         """Set calibration factor based on known speed and wheel RPM.
@@ -166,6 +180,12 @@ class SpeedController:
             known_speed_kmh: Known speed in km/h.
             known_wheel_rpm: Known wheel RPM at that speed.
         """
+        # Input validation
+        if not isinstance(known_speed_kmh, (int, float)) or not isinstance(known_wheel_rpm, (int, float)):
+            print(f"Warning: Invalid calibration parameters. Types: speed={type(known_speed_kmh)}, rpm={type(known_wheel_rpm)}")
+            self.calibration_factor = 1.0
+            return
+        
         if known_wheel_rpm > 0 and known_speed_kmh > 0:
             # Convert wheel RPM to revolutions per second
             wheel_rps = known_wheel_rpm / 60.0
@@ -190,7 +210,11 @@ class SpeedController:
         
         Args:
             adjustment_value: The fixed gear adjustment factor (default: 6.2).
+                            Must be greater than 0.
         """
-        self.fixed_gear_adjustment = adjustment_value
+        if adjustment_value > 0:
+            self.fixed_gear_adjustment = adjustment_value
+        else:
+            print("Warning: fixed_gear_adjustment must be greater than 0. Keeping current value.")
     
 

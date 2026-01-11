@@ -99,7 +99,7 @@ if load_controller.motor_sensor is not None:
             pin_value = load_controller.motor_sensor.motor_stop_pin.value()
             if pin_value == 1:  # HIGH - stop pulse detected
                 debounce_count += 1
-            else:
+        else:
                 debounce_count = 0
             
             utime.sleep_ms(10)
@@ -120,12 +120,12 @@ if load_controller.motor_sensor is not None:
         
         if stop_detected:
             print("  Load set to minimum (0% - stop position)")
-        else:
+    else:
             print("  Warning: Could not reach stop position")
-            print("  Setting gear to 1 and incline to -100% as fallback...")
-            gear_selector.current_gear = 1
-            load_controller.set_incline(-100.0)
-            load_controller.apply_load()
+        print("  Setting gear to 1 and incline to -100% as fallback...")
+        gear_selector.current_gear = 1
+        load_controller.set_incline(-100.0)
+        load_controller.apply_load()
 else:
     # No motor sensor, use gear and incline method
     print("  No motor sensor - using gear/incline method...")

@@ -11,6 +11,16 @@ class LoadController:
     Uses direction control only (no speed control).
     """
     
+    # Constants
+    MOTOR_ROTATIONS_PER_CRANK = 1000  # Motor rotations per full crank rotation
+    MAX_LOAD_POSITION = 500  # Maximum position for 180 degrees (half of MOTOR_ROTATIONS_PER_CRANK)
+    POSITION_TOLERANCE = 5  # Position tolerance for motor movement (position units)
+    MOTOR_MOVE_TIMEOUT_MS = 30000  # 30 second timeout for motor movement
+    CALIBRATION_TIMEOUT_MS = 600000  # 10 minute timeout for calibration
+    DEBOUNCE_HIGH_READINGS = 10  # Required consecutive HIGH readings for debounce
+    DEBOUNCE_LOW_READINGS = 10  # Required consecutive LOW readings for debounce
+    PULSE_CHECK_INTERVAL_MS = 5000  # Interval for checking motor pulse progress
+    
     def __init__(self, l298n_in1_pin, l298n_in2_pin, gear_selector=None, base_load_factor=1.0, motor_sensor=None, lcd=None, rgb_color_func=None):
         """Initialize the load controller.
         
@@ -125,7 +135,7 @@ class LoadController:
         
         # Wait for pin to go HIGH (start of wide pulse) with debouncing
         debounce_count = 0
-        required_high_readings = 10  # Require 10 consecutive HIGH readings (100ms) to detect pulse start
+        required_high_readings = LoadController.DEBOUNCE_HIGH_READINGS
         start_time = utime.ticks_ms()
         
         # Wait for pulse to start
@@ -159,8 +169,8 @@ class LoadController:
         self._display_calibration_status("Initializing...", "Checking sensors")
         utime.sleep_ms(500)  # Brief pause to show message
         
-        # Ensure motor_rotations_per_motor_crank is set to 1000 (should already be default)
-        self.motor_sensor.motor_rotations_per_motor_crank = 1000
+        # Ensure motor_rotations_per_motor_crank is set correctly (should already be default)
+        self.motor_sensor.motor_rotations_per_motor_crank = LoadController.MOTOR_ROTATIONS_PER_CRANK
         
         # Temporarily disable the interrupt handler to avoid false positives
         self.motor_sensor.disable_stop_interrupt()
@@ -188,8 +198,8 @@ class LoadController:
             
             # Wait for pin to go LOW (move off stop position)
             debounce_count = 0
-            required_low_readings = 10
-            timeout_ms = 30000  # 30 second timeout
+            required_low_readings = LoadController.DEBOUNCE_LOW_READINGS
+            timeout_ms = LoadController.MOTOR_MOVE_TIMEOUT_MS
             start_time = utime.ticks_ms()
             
             while debounce_count < required_low_readings:
@@ -321,7 +331,13 @@ class LoadController:
                             Positive values = incline (harder),
                             0 = flat road.
         """
-        self.incline_percent = max(-100.0, min(100.0, incline_percent))
+        # Input validation
+        if not isinstance(incline_percent, (int, float)):
+            print(f"Warning: Invalid incline_percent type: {type(incline_percent)}. Using 0.0")
+            incline_percent = 0.0
+        
+        # Clamp to valid range
+        self.incline_percent = max(-100.0, min(100.0, float(incline_percent)))
         self._update_load()
     
     def get_incline(self):
@@ -422,15 +438,52 @@ class LoadController:
         self.l298n_in2_pin.value(1)
         self.current_direction = None
     
+    def _wait_for_motor_to_stop(self, timeout_ms=5000):
+        """Wait for motor to finish moving (motor_is_running becomes False).
+        
+        Args:
+            timeout_ms: Maximum time to wait in milliseconds (default: 5000).
+        
+        Returns:
+            True if motor stopped, False if timeout.
+        """
+        if not self.motor_is_running:
+            return True
+        
+        start_time = utime.ticks_ms()
+        while self.motor_is_running:
+            if utime.ticks_diff(utime.ticks_ms(), start_time) > timeout_ms:
+                print(f"Warning: Motor did not stop within {timeout_ms}ms timeout")
+                # Force stop if timeout
+                self.stop_motor()
+                self.motor_is_running = False
+                return False
+            utime.sleep_ms(10)
+        
+        # Small delay to ensure position has updated after motor stops
+        utime.sleep_ms(50)
+        return True
+    
     def _move_motor_to_position(self, target_position, forward=True):
         """Move motor until motor_crank_position reaches target position.
         
+        Simplified: Only uses positions 0-500 (never negative).
+        Motor can run in reverse, but position never goes below 0 or above 500.
+        
         Args:
-            target_position: Target motor crank position (can be negative or positive, -500 to +500).
+            target_position: Target motor crank position (0 to 500).
             forward: True to move forward, False to move reverse.
         """
-        if self.motor_sensor is None or self.motor_is_running:
+        if self.motor_sensor is None:
             return
+        
+        # Clamp target position to valid range (0-500)
+        max_load_position = LoadController.MAX_LOAD_POSITION
+        target_position = max(0, min(max_load_position, int(target_position)))
+        
+        # Wait for any existing motor movement to complete
+        if self.motor_is_running:
+            self._wait_for_motor_to_stop()
         
         self.motor_is_running = True
         
@@ -440,18 +493,21 @@ class LoadController:
             self.set_motor_direction_reverse()
         
         # Wait until we reach target position
-        timeout_ms = 30000  # 30 second timeout
+        timeout_ms = LoadController.MOTOR_MOVE_TIMEOUT_MS
         start_time = utime.ticks_ms()
         
-        # Wait until we reach target position (allowing negative positions)
+        # Wait until we reach target position (0-500 range)
         while True:
             if utime.ticks_diff(utime.ticks_ms(), start_time) > timeout_ms:
+                print(f"Warning: Motor movement timeout after {timeout_ms}ms")
                 break
             current_position = self.motor_sensor.motor_crank_position
+            # Ensure current position is in valid range (safety check)
+            current_position = max(0, min(max_load_position, current_position))
             
             # Check if we've reached target (within tolerance)
             position_diff = abs(target_position - current_position)
-            if position_diff <= 5:  # Within 5 position units (tolerance)
+            if position_diff <= LoadController.POSITION_TOLERANCE:
                 break
             utime.sleep_ms(10)
         
@@ -468,9 +524,9 @@ class LoadController:
         if duration_ms is None:
             duration_ms = self.motor_run_time_ms
         
-        # Don't start if motor is already running
+        # Wait for motor to finish if it's currently running
         if self.motor_is_running:
-            return
+            self._wait_for_motor_to_stop()
         
         self.motor_is_running = True
         
@@ -508,63 +564,49 @@ class LoadController:
         
         # If we have a motor sensor, move motor to target position
         if self.motor_sensor is not None:
-            # Target position: 0 degrees = 0% load, 180 degrees = 100% load
-            # Position 0 = 0% load, position 500 (forward) = 100% load, position -500 (reverse) = 100% load
-            # Calculate target motor crank position: (target_degrees / 180) * 500
-            # 500 represents 180 degrees (half of 1000 rotations per full crank rotation)
+            # Simplified: Always use positions 0-500 (never negative)
+            # Position 0 = 0% load, position 500 = 100% load
+            # Motor can run in reverse, but position never goes below 0 or above 500
             target_degrees = (total_load / 100.0) * 180.0  # Convert 0-100% to 0-180 degrees
-            max_load_position = self.motor_sensor.motor_rotations_per_motor_crank // 2  # 500 for 180 degrees
-            target_position_abs = int((target_degrees / 180.0) * max_load_position)  # 0 to 500
+            max_load_position = LoadController.MAX_LOAD_POSITION
+            target_position = int((target_degrees / 180.0) * max_load_position)  # 0 to 500
+            target_position = max(0, min(max_load_position, target_position))  # Clamp to 0-500
             
-            # Get current motor crank position (can be negative or positive)
+            # Get current motor crank position (always 0-500, never negative)
             current_position = self.motor_sensor.motor_crank_position
-            current_abs = abs(current_position)
+            # Ensure position is in valid range (safety check)
+            current_position = max(0, min(max_load_position, current_position))
             
-            # Calculate current load based on absolute position
-            current_load = (current_abs / max_load_position) * 100.0 if max_load_position > 0 else 0.0
+            # Calculate current load based on position
+            current_load = (current_position / max_load_position) * 100.0 if max_load_position > 0 else 0.0
             current_load = min(100.0, current_load)  # Clamp to 100%
             
-            # Determine if we're increasing or decreasing load
-            is_increasing_load = total_load > current_load
-            
-            # Choose target position (positive or negative) based on current position and direction
-            # If increasing load and current is negative, prefer positive target
-            # If decreasing load and current is positive, prefer negative target
-            # Otherwise, choose direction that doesn't go wrong way first
-            if is_increasing_load:
-                # Increasing load: prefer forward (positive) if current is at or near 0
-                # If current is negative, move forward to positive
-                if current_position <= 0:
-                    target_position = target_position_abs  # Forward to positive
-                else:
-                    # Current is positive, move forward to higher positive
-                    target_position = target_position_abs
-            else:
-                # Decreasing load: prefer reverse (negative) if current is at or near 0
-                # If current is positive, move reverse to negative
-                if current_position >= 0:
-                    target_position = -target_position_abs  # Reverse to negative
-                else:
-                    # Current is negative, move reverse to higher negative (closer to 0)
-                    target_position = -target_position_abs
-            
-            # Calculate distance to target
+            # Calculate distance to target (always positive since both are 0-500)
             position_diff = abs(target_position - current_position)
             
-            # Determine direction to move
-            if target_position > current_position:
-                use_forward = True
-            else:
-                use_forward = False
+            # Determine direction to move (forward to increase, reverse to decrease)
+            use_forward = target_position > current_position
             
-            # Only move if difference is significant (more than 5 position units = ~1.8 degrees)
-            # Don't move if motor is already running
-            if position_diff > 5 and not self.motor_is_running:
+            # Wait for motor to finish if it's currently running (prevents position tracking issues)
+            if self.motor_is_running:
+                self._wait_for_motor_to_stop()
+                # Re-read position after motor stops (ensure it's in valid range)
+                current_position = self.motor_sensor.motor_crank_position
+                current_position = max(0, min(max_load_position, current_position))
+                # Recalculate distance and direction
+                position_diff = abs(target_position - current_position)
+                use_forward = target_position > current_position
+            
+            # Only move if difference is significant (more than tolerance = ~1.8 degrees)
+            if position_diff > LoadController.POSITION_TOLERANCE:
                 # Move in the correct direction (forward to increase, reverse to decrease)
                 self._move_motor_to_position(target_position, forward=use_forward)
             else:
-                # Close enough to target or motor already running, stop motor
-                if not self.motor_is_running:
+                # Close enough to target, ensure motor is stopped
+                if self.motor_is_running:
+                    self.stop_motor()
+                    self.motor_is_running = False
+                else:
                     self.stop_motor()
         else:
             # No motor sensor, use simple load-based control
@@ -579,12 +621,32 @@ class LoadController:
                 # At 50% load, stop
                 self.stop_motor()
     
-    def apply_load(self):
+    def apply_load(self, force=False):
         """Apply the calculated load based on current gear and incline.
         
         This should be called whenever the gear changes or incline is updated.
         Moves the stepper motor to position magnets at the correct distance.
+        
+        If the motor is currently moving, this will wait for it to finish before
+        calculating and moving to the new target position. This ensures position
+        tracking stays synchronized.
+        
+        Args:
+            force: If True, bypass the minimum update interval check (default: False).
+                   Use this when gear changes to ensure load updates immediately.
         """
+        # Enforce minimum time between load updates to prevent rapid-fire changes
+        # But allow forced updates (e.g., when gear changes)
+        if not force:
+            current_time = utime.ticks_ms()
+            if utime.ticks_diff(current_time, self.last_load_update_time) < self.min_load_update_interval_ms:
+                # Too soon since last update, skip this one
+                return
+            self.last_load_update_time = current_time
+        else:
+            # Force update - still update timestamp but don't check interval
+            self.last_load_update_time = utime.ticks_ms()
+        
         self._update_load()
     
     def remove_load(self):
@@ -604,7 +666,7 @@ class LoadController:
         # This will be handled by _update_load() based on motor crank position
         # For now, just update the incline to achieve the desired load
         # This is a simplified approach - in practice, you'd want more sophisticated control
-        pass
+        # TODO: Implement direct load setting
     
     def get_current_load_percent(self):
         """Return the current load as a percentage (0.0 to 100.0).
@@ -613,13 +675,13 @@ class LoadController:
             Current load percentage based on motor crank position or estimated load.
         """
         if self.motor_sensor is not None:
-            # Calculate load based on absolute motor crank position
-            # Position 0 = 0% load, position 500 (forward) or -500 (reverse) = 180 degrees = 100% load
-            # Both +500 and -500 represent the same load (180 degrees either way from 0)
+            # Simplified: Position is always 0-500 (never negative)
+            # Position 0 = 0% load, position MAX_LOAD_POSITION (500) = 100% load
             position = self.motor_sensor.motor_crank_position
-            position_abs = abs(position)
-            max_load_position = self.motor_sensor.motor_rotations_per_motor_crank // 2  # 500 for 180 degrees
-            load = (position_abs / max_load_position) * 100.0 if max_load_position > 0 else 0.0
+            # Ensure position is in valid range (safety check)
+            position = max(0, min(LoadController.MAX_LOAD_POSITION, position))
+            max_load_position = LoadController.MAX_LOAD_POSITION
+            load = (position / max_load_position) * 100.0 if max_load_position > 0 else 0.0
             return max(0.0, min(100.0, load))  # Clamp to 0-100%
         
         # No motor sensor, return estimated load based on gear and incline

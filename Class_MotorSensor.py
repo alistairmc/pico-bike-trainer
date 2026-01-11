@@ -41,32 +41,34 @@ class MotorSensor:
         Signal transitions from 0V (low) to 3.3V (high) for each rotation.
         Increments or decrements counters based on motor direction.
         
+        Simplified: Only use positions 0-500 (never negative).
+        Motor can run in reverse, but position never goes below 0.
+        
         Args:
             _pin: The pin that triggered the interrupt (unused but required by MicroPython).
         """
         # Update counters based on direction
         # Using += and -= are atomic enough for interrupt context
         self.motor_pulse_count += self.motor_direction
-        # Update motor crank position (can be negative or positive)
+        # Update motor crank position (0-500 range only, never negative)
         # Position 0 = stop position (0% load)
-        # Position +500 = 180 degrees forward (100% load)
-        # Position -500 = 180 degrees reverse (100% load)
-        self.motor_crank_position += self.motor_direction
-        
-        # Handle wrapping/clamping for motor_crank_position
-        # Allow positions from -500 to +500 for load control (180 degrees either way from 0)
+        # Position 500 = 180 degrees forward (100% load)
         max_load_position = self.motor_rotations_per_motor_crank // 2  # 500
+        
         if self.motor_direction == 1:  # Forward
-            # Forward: wrap at full rotation (1000) back to 0
-            if self.motor_crank_position >= self.motor_rotations_per_motor_crank:
-                self.motor_crank_position = 0
-            # Clamp to max load position if going too far forward (beyond 500)
-            elif self.motor_crank_position > max_load_position:
+            # Forward: increment position, clamp to max (500)
+            if self.motor_crank_position < max_load_position:
+                self.motor_crank_position += 1
+            # Don't go above 500
+            if self.motor_crank_position > max_load_position:
                 self.motor_crank_position = max_load_position
         else:  # Reverse
-            # Reverse: clamp to -500 (max load in reverse direction)
-            if self.motor_crank_position < -max_load_position:
-                self.motor_crank_position = -max_load_position
+            # Reverse: decrement position, clamp to min (0)
+            if self.motor_crank_position > 0:
+                self.motor_crank_position -= 1
+            # Don't go below 0
+            if self.motor_crank_position < 0:
+                self.motor_crank_position = 0
     
     def _motor_crank_pulse_handler(self, _pin):
         """Interrupt handler for motor crank rotation sensor pulses.
@@ -111,44 +113,46 @@ class MotorSensor:
     def get_motor_crank_position(self):
         """Get the current motor crank position in degrees (0-180 for load).
         
+        Simplified: Only uses positions 0-500 (never negative).
         Position 0 = 0 degrees (bottom position, least resistance, stop position)
-        Position +500 = 180 degrees (top position, most resistance, forward)
-        Position -500 = 180 degrees (top position, most resistance, reverse)
-        Both +500 and -500 represent the same load (180 degrees either way from 0).
+        Position 500 = 180 degrees (top position, most resistance, 100% load)
         
         Returns:
             Motor crank position in degrees (0-180), where 0 = bottom, 180 = top.
         """
-        # Use absolute position for degree calculation
-        # Both +500 and -500 represent 180 degrees (same load)
-        position_abs = abs(self.motor_crank_position)
+        # Position is always 0-500 (never negative)
+        position = self.motor_crank_position
         max_load_position = self.motor_rotations_per_motor_crank // 2  # 500
         
-        # Clamp to 180 degrees max (100% load)
-        if position_abs > max_load_position:
-            position_abs = max_load_position
+        # Clamp to valid range (safety check)
+        if position > max_load_position:
+            position = max_load_position
+        if position < 0:
+            position = 0
         
-        position_degrees = (position_abs / max_load_position) * 180.0
+        position_degrees = (position / max_load_position) * 180.0
         return position_degrees
     
     def get_motor_crank_position_percent(self):
         """Get the current motor crank position as a percentage of full rotation.
         
-        Uses absolute position since both +500 and -500 represent the same load.
+        Simplified: Only uses positions 0-500 (never negative).
         
         Returns:
-            Motor crank position as percentage (0.0-100.0), where 0.0 = bottom, 50.0 = top.
+            Motor crank position as percentage (0.0-100.0), where 0.0 = bottom, 100.0 = top.
         """
-        # Use absolute position for percentage calculation
-        position_abs = abs(self.motor_crank_position)
+        # Position is always 0-500 (never negative)
+        position = self.motor_crank_position
         max_load_position = self.motor_rotations_per_motor_crank // 2  # 500
         
-        # Clamp to max load position
-        if position_abs > max_load_position:
-            position_abs = max_load_position
+        # Clamp to valid range (safety check)
+        if position > max_load_position:
+            position = max_load_position
+        if position < 0:
+            position = 0
         
         # Calculate as percentage of 180 degrees (0-100% load range)
-        return (position_abs / max_load_position) * 100.0
+        return (position / max_load_position) * 100.0
     
     def is_motor_crank_at_bottom(self):
         """Check if the motor crank is currently at its lowest position (bottom).
