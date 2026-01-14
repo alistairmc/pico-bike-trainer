@@ -1,13 +1,12 @@
 class SpeedController:
     """Speed controller class for managing speed calculations from RPM.
     
-    This class handles all speed calculations and unit conversions.
-    It takes RPM values from sensors and converts them to speed in km/h or mph.
+    This class handles all speed calculations and converts RPM to speed in mph.
     Display logic is handled by the View class.
     """
     
     def __init__(self, crank_sensor=None, wheel_speed_sensor=None, gear_selector=None, 
-                 load_controller=None, unit='kmph'):
+                 load_controller=None, unit='mph'):
         """Initialize the speed controller.
         
         Args:
@@ -15,13 +14,13 @@ class SpeedController:
             wheel_speed_sensor: WheelSpeedSensor instance (default: None).
             gear_selector: GearSelector instance to get current gear ratio (default: None).
             load_controller: LoadController instance to get current load (default: None).
-            unit: Speed unit to display - 'kmph' for km/h or 'mph' for mph (default: 'kmph').
+            unit: Speed unit to display - always 'mph' (default: 'mph').
         """
         self.crank_sensor = crank_sensor
         self.wheel_speed_sensor = wheel_speed_sensor
         self.gear_selector = gear_selector
         self.load_controller = load_controller
-        self.unit = unit.lower()  # Store unit preference (kmph or mph)
+        self.unit = 'mph'  # Always use mph
         
         # Wheel circumference and calibration
         self.wheel_circumference = 2.075  # meters (26-inch wheel default)
@@ -83,10 +82,10 @@ class SpeedController:
         return speed_kmh * 0.621371  # Convert km/h to mph
     
     def get_crank_speed(self):
-        """Get current crank speed in the selected unit.
+        """Get current crank speed in mph.
         
         Returns:
-            Speed in km/h or mph based on current unit setting.
+            Speed in mph.
         """
         crank_rpm = self.get_crank_rpm()
         if self.unit == 'mph':
@@ -95,10 +94,10 @@ class SpeedController:
             return self.rpm_to_speed_kmh(crank_rpm)
     
     def get_wheel_speed(self):
-        """Get current wheel speed in the selected unit.
+        """Get current wheel speed in mph.
         
         Returns:
-            Speed in km/h or mph based on current unit setting.
+            Speed in mph.
         """
         wheel_rpm = self.get_wheel_rpm()
         if self.unit == 'mph':
@@ -112,7 +111,7 @@ class SpeedController:
         This is the main speed display - (wheel speed sensor / fixed_gear_adjustment) * virtual gear ratio.
         
         Returns:
-            Speed in km/h or mph based on current unit setting.
+            Speed in mph.
         """
         if self.wheel_speed_sensor is not None:
             # Get wheel RPM from sensor
@@ -141,18 +140,6 @@ class SpeedController:
         
         # Fallback to wheel speed if no wheel sensor
         return self.get_wheel_speed()
-    
-    def toggle_unit(self):
-        """Toggle between km/h and mph units.
-        
-        Returns:
-            The new unit string ('kmph' or 'mph').
-        """
-        if self.unit == 'mph':
-            self.unit = 'kmph'
-        else:
-            self.unit = 'mph'
-        return self.unit
     
     def set_wheel_circumference(self, circumference_meters):
         """Set the wheel circumference in meters.

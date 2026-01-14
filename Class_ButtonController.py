@@ -10,14 +10,16 @@ class ButtonController:
     """
     
     def __init__(self, speed_controller=None, load_controller=None,
-                 gear_selector=None, view=None, incline_step=5.0, max_incline=100.0, 
-                 min_incline=-100.0, debounce_ms=200, gear_click_timeout_ms=800):
+                 gear_selector=None, timer_controller=None, view=None, 
+                 incline_step=5.0, max_incline=100.0, min_incline=-100.0, 
+                 debounce_ms=200, gear_click_timeout_ms=800):
         """Initialize the button controller.
         
         Args:
             speed_controller: SpeedController instance (default: None).
             load_controller: LoadController instance (default: None).
             gear_selector: GearSelector instance (default: None).
+            timer_controller: TimerController instance (default: None).
             view: View instance for display updates (default: None).
             incline_step: Incline change per button press in percent (default: 5.0).
             max_incline: Maximum incline percentage (default: 100.0).
@@ -29,6 +31,7 @@ class ButtonController:
         self.speed_controller = speed_controller
         self.load_controller = load_controller
         self.gear_selector = gear_selector
+        self.timer_controller = timer_controller
         self.view = view
         self.incline_step = incline_step
         self.max_incline = max_incline
@@ -45,16 +48,13 @@ class ButtonController:
         self.decrement_start_gear = None
         
         # Initialize button pins
-        self.toggle_unit_button = Pin(16, Pin.IN, Pin.PULL_UP)  # Toggle speed unit (kmph/mph)
-        
-        self.increase_incline_button = Pin(14, Pin.IN, Pin.PULL_UP)  # Increase incline (uphill)
-        self.decrease_incline_button = Pin(18, Pin.IN, Pin.PULL_UP)  # Decrease incline (downhill)
+        self.increase_incline_button = Pin(16, Pin.IN, Pin.PULL_UP)  # Increase incline (uphill)
+        self.decrease_incline_button = Pin(17, Pin.IN, Pin.PULL_UP)  # Decrease incline (downhill)
         self.decrement_gear_button = Pin(3, Pin.IN, Pin.PULL_UP)  # Decrement gear
         self.increment_gear_button = Pin(2, Pin.IN, Pin.PULL_UP)  # Increment gear
-        self.control_button = Pin(20, Pin.IN, Pin.PULL_UP)  # Control button (currently unused)
+        self.control_button = Pin(18, Pin.IN, Pin.PULL_UP)  # Control button (currently unused)
         
         # Track previous button states for release detection
-        self.prev_toggle_unit = 1
         self.prev_increase_incline = 1
         self.prev_decrease_incline = 1
         self.prev_decrement_gear = 1
@@ -63,6 +63,10 @@ class ButtonController:
         
         # Timestamp-based debouncing (more efficient than sleep)
         self.last_button_action_time = {}  # Track last action time per button
+        
+        # Control button tracking for long press detection
+        self.control_button_press_time = 0  # When control button was pressed (for long press detection)
+        self.control_button_held = False  # Track if control button is currently held
         
     def check_buttons(self):
         """Check all buttons and perform associated actions.
@@ -74,23 +78,11 @@ class ButtonController:
         current_time = utime.ticks_ms()
         
         # Get current button states (check all buttons first to avoid missing rapid presses)
-        toggle_unit_state = self.toggle_unit_button.value()
         increase_incline_state = self.increase_incline_button.value()
         decrease_incline_state = self.decrease_incline_button.value()
         decrement_gear_state = self.decrement_gear_button.value()
         increment_gear_state = self.increment_gear_button.value()
         control_state = self.control_button.value()
-        
-        # Toggle speed unit (detect release: was pressed, now released)
-        if self.prev_toggle_unit == 0 and toggle_unit_state == 1:
-            # Check debounce time
-            last_action = self.last_button_action_time.get('toggle_unit', 0)
-            if utime.ticks_diff(current_time, last_action) >= self.debounce_ms:
-                if self.speed_controller is not None:
-                    self.speed_controller.toggle_unit()
-                    self._force_display_update()
-                self.last_button_action_time['toggle_unit'] = current_time
-        self.prev_toggle_unit = toggle_unit_state
         
         # Increase incline (uphill) - detect release
         if self.prev_increase_incline == 0 and increase_incline_state == 1:
@@ -155,7 +147,41 @@ class ButtonController:
                 print(f"Gear increment click #{self.increment_click_count} (will apply after {self.gear_click_timeout_ms}ms delay)")
         self.prev_increment_gear = increment_gear_state
         
-        # Control button (currently unused)
+        # Control button - Timer control
+        if self.timer_controller is not None:
+            # Detect button press (transition from released to pressed)
+            if self.prev_control == 1 and control_state == 0:
+                self.control_button_press_time = current_time
+                self.control_button_held = True
+            
+            # Detect button release (transition from pressed to released)
+            if self.prev_control == 0 and control_state == 1:
+                self.control_button_held = False
+                hold_duration = utime.ticks_diff(current_time, self.control_button_press_time)
+                
+                # Check for long press (3 seconds = 3000ms) while paused
+                if hold_duration >= 3000 and self.timer_controller.get_state() == 'paused':
+                    # Reset timer
+                    self.timer_controller.reset()
+                    self._force_display_update()
+                # Check for short press (normal click)
+                elif hold_duration < 3000:
+                    # Debounce check
+                    last_action = self.last_button_action_time.get('control', 0)
+                    if utime.ticks_diff(current_time, last_action) >= self.debounce_ms:
+                        self._handle_timer_toggle(current_time)
+                        self.last_button_action_time['control'] = current_time
+            
+            # Check for long press while button is still held (for reset when paused)
+            if self.control_button_held and control_state == 0:
+                hold_duration = utime.ticks_diff(current_time, self.control_button_press_time)
+                if hold_duration >= 3000 and self.timer_controller.get_state() == 'paused':
+                    # Reset timer immediately when 3 seconds reached
+                    self.timer_controller.reset()
+                    self.control_button_held = False
+                    print("Timer reset (long press)")
+                    self._force_display_update()
+        
         self.prev_control = control_state
     
     def _process_gear_clicks(self, current_time):
@@ -224,6 +250,29 @@ class ButtonController:
                 # Reset click tracking
                 self.increment_click_count = 0
                 self.increment_start_gear = None
+    
+    def _handle_timer_toggle(self, current_time):
+        """Handle timer start/pause/resume toggle.
+        
+        Args:
+            current_time: Current time in milliseconds.
+        """
+        if self.timer_controller is None:
+            return
+        
+        timer_state = self.timer_controller.get_state()
+        
+        if timer_state == 'stopped':
+            # Start timer
+            self.timer_controller.start(current_time)
+        elif timer_state == 'running':
+            # Pause timer
+            self.timer_controller.pause(current_time)
+        elif timer_state == 'paused':
+            # Resume timer
+            self.timer_controller.start(current_time)
+        
+        self._force_display_update()
     
     def _force_display_update(self):
         """Force an immediate display update.

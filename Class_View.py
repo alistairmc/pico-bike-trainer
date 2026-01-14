@@ -6,7 +6,8 @@ class View:
     """
 
     def __init__(self, lcd, rgb_color_func, back_col, speed_controller=None, 
-                 gear_selector=None, load_controller=None, screen_width=240, screen_height=240):
+                 gear_selector=None, load_controller=None, timer_controller=None,
+                 screen_width=240, screen_height=240):
         """Initialize the view.
 
         Args:
@@ -16,6 +17,7 @@ class View:
             speed_controller: SpeedController instance (default: None).
             gear_selector: GearSelector instance (default: None).
             load_controller: LoadController instance (default: None).
+            timer_controller: TimerController instance for timer display (default: None).
             screen_width: Width of the display screen in pixels (default: 240).
             screen_height: Height of the display screen in pixels (default: 240).
         """
@@ -25,6 +27,7 @@ class View:
         self.speed_controller = speed_controller
         self.gear_selector = gear_selector
         self.load_controller = load_controller
+        self.timer_controller = timer_controller
         self.screen_width = screen_width
         self.screen_height = screen_height
 
@@ -51,6 +54,13 @@ class View:
                             self.lcd.write_text("Speed Error", 50, 50, 2, int(error_color))
                     except:
                         pass
+
+            # Render timer
+            if self.timer_controller is not None:
+                try:
+                    self._render_timer()
+                except Exception as e:
+                    print(f"Error rendering timer: {e}")
 
             # Render gear selector
             if self.gear_selector is not None:
@@ -82,8 +92,8 @@ class View:
         calculated_speed = self.speed_controller.get_calculated_speed()
         wheel_rpm = self.speed_controller.get_wheel_rpm()
 
-        # Unit label
-        unit_label = "mph" if self.speed_controller.unit == 'mph' else "kmph"
+        # Unit label (always mph)
+        unit_label = "mph"
 
         # Clear display area
         display_height = 205
@@ -123,31 +133,31 @@ class View:
             rpm_y = speed_y + 61
             rpm_char_width = char_width_base * 2  # Size 2 font
 
-            # Display wheel RPM
-            wheel_rpm_text = "WRPM: " + str(wheel_rpm)
-            wheel_rpm_text_width = len(wheel_rpm_text) * rpm_char_width
-            wheel_rpm_x = (self.screen_width - wheel_rpm_text_width) // 2
+            # Display wheel RPM - COMMENTED OUT
+            # wheel_rpm_text = "WRPM: " + str(wheel_rpm)
+            # wheel_rpm_text_width = len(wheel_rpm_text) * rpm_char_width
+            # wheel_rpm_x = (self.screen_width - wheel_rpm_text_width) // 2
 
             rpm_color = self.rgb_color_func(200, 200, 200)
-            if rpm_color is not None:
-                self.lcd.write_text(wheel_rpm_text, int(wheel_rpm_x), int(rpm_y), 2, int(rpm_color))
+            # if rpm_color is not None:
+            #     self.lcd.write_text(wheel_rpm_text, int(wheel_rpm_x), int(rpm_y), 2, int(rpm_color))
 
-            # Display Road load value if load controller is available
+            # Display Road load value if load controller is available - COMMENTED OUT
             if self.load_controller is not None:
                 try:
-                    load_percent = self.load_controller.get_current_load_percent()
-                    load_y = rpm_y + 18
-                    load_text = "Road Load: " + str(int(load_percent))
+                    # load_percent = self.load_controller.get_current_load_percent()
+                    # load_y = rpm_y + 18
+                    # load_text = "Road Load: " + str(int(load_percent))
 
-                    load_text_width = len(load_text) * rpm_char_width
-                    load_x = (self.screen_width - load_text_width) // 2
+                    # load_text_width = len(load_text) * rpm_char_width
+                    # load_x = (self.screen_width - load_text_width) // 2
 
-                    if rpm_color is not None:
-                        self.lcd.write_text(load_text, int(load_x), int(load_y), 2, int(rpm_color))
+                    # if rpm_color is not None:
+                    #     self.lcd.write_text(load_text, int(load_x), int(load_y), 2, int(rpm_color))
 
                     # Display incline value
                     incline_percent = self.load_controller.get_incline()
-                    incline_y = load_y + 18
+                    incline_y = rpm_y + 18  # Changed from load_y + 18 since load is commented out
                     if incline_percent > 0:
                         incline_text = "Hill: +" + str(int(incline_percent))
                     elif incline_percent < 0:
@@ -167,6 +177,61 @@ class View:
             print(f"Error rendering RPM/load section: {e}")
             # Continue rendering other elements
 
+    def _render_timer(self):
+        """Render timer display."""
+        if self.timer_controller is None:
+            return
+        
+        import utime
+        current_time = utime.ticks_ms()
+        elapsed_ms = self.timer_controller.get_elapsed_ms(current_time)
+        
+        # Format timer as MM:SS
+        total_seconds = elapsed_ms // 1000
+        minutes = total_seconds // 60
+        seconds = total_seconds % 60
+        timer_text = f"{minutes:02d}:{seconds:02d}"
+        
+        # Display timer label and value
+        try:
+            timer_label = "Time:"
+            timer_label_size = 2
+            timer_value_size = 2
+            
+            char_width_base = 8
+            label_char_width = char_width_base * timer_label_size
+            value_char_width = char_width_base * timer_value_size
+            
+            # Position timer just above gear display
+            # Gear display is at bottom (screen_height - 20)
+            # Timer should be above it with a small gap
+            gear_display_y = self.screen_height - 20  # Same calculation as gear selector
+            timer_text_height = timer_value_size * 8  # Size 2 = 16 pixels tall
+            gap = 6  # Gap between timer and gear display
+            timer_y = gear_display_y - timer_text_height - gap
+            
+            # Calculate total width needed
+            label_width = len(timer_label) * label_char_width
+            value_width = len(timer_text) * value_char_width
+            total_width = label_width + 4 + value_width  # 4px gap between label and value
+            
+            # Center the timer horizontally (like gear display)
+            label_x = (self.screen_width - total_width) // 2
+            label_y = timer_y
+            
+            # Calculate timer value position (next to label)
+            timer_value_x = label_x + label_width + 4  # Small gap after label
+            timer_value_y = label_y
+            
+            timer_color = self.rgb_color_func(200, 200, 200)
+            if timer_color is not None:
+                # Display label
+                self.lcd.write_text(timer_label, label_x, label_y, timer_label_size, int(timer_color))
+                # Display timer value
+                self.lcd.write_text(timer_text, int(timer_value_x), timer_value_y, timer_value_size, int(timer_color))
+        except (TypeError, ValueError, AttributeError) as e:
+            print(f"Error rendering timer: {e}")
+    
     def _render_gear_selector(self):
         """Render gear selector display."""
         if self.gear_selector is None:

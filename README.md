@@ -54,19 +54,18 @@ The Pico Bike Trainer is a smart bike trainer system that:
 ### User Input (Buttons/Joystick)
 | GPIO | Function | Direction | Description |
 |------|----------|-----------|-------------|
-| **2** | Decrement Gear | INPUT | Decrement gear (PULL_UP) |
-| **3** | Increment Gear | INPUT | Increment gear (PULL_UP) |
-| **14** | Increase Incline | INPUT | Increase incline/uphill (PULL_UP) |
-| **16** | Toggle Unit | INPUT | Toggle speed unit (kmph/mph) (PULL_UP) |
-| **18** | Decrease Incline | INPUT | Decrease incline/downhill (PULL_UP) |
-| **20** | Control Button | INPUT | Control button (PULL_UP, currently unused) |
+| **2** | Increment Gear | INPUT | Increment gear (PULL_UP) |
+| **3** | Decrement Gear | INPUT | Decrement gear (PULL_UP) |
+| **16** | Increase Incline | INPUT | Increase incline/uphill (PULL_UP) |
+| **17** | Decrease Incline | INPUT | Decrease incline/downhill (PULL_UP) |
+| **18** | Control Button | INPUT | Control button (PULL_UP, currently unused) |
 
 ### GPIO Summary
 - **Total GPIO Pins Used**: 18
 - **Input Pins**: 10 (all with PULL_UP)
   - Motor sensors: 0, 1
   - Speed sensors: 4, 7
-  - Buttons: 2, 3, 14, 16, 18, 20
+  - Buttons: 2, 3, 16, 17, 18
 - **Output Pins**: 8
   - Motor control: 5, 6
   - Display: 8, 9, 10, 11, 12, 13
@@ -128,11 +127,11 @@ The Pico Bike Trainer is a smart bike trainer system that:
   - Speed calculations handled by SpeedController
 
 ### 3. SpeedController (`Class_SpeedController.py`)
-- **Purpose**: Manages all speed calculations and unit conversions
+- **Purpose**: Manages all speed calculations
 - **GPIO**: None (software controller)
 - **Features**:
-  - Converts RPM to speed (km/h or mph)
-  - Manages unit conversion (kmph ↔ mph)
+  - Converts RPM to speed in mph
+  - Always displays speed in mph (miles per hour)
   - Handles wheel circumference and calibration
   - Calculates wheel RPM from crank RPM and gear ratio (if wheel sensor not available)
   - Provides speed and RPM data to View class for display
@@ -175,7 +174,7 @@ The Pico Bike Trainer is a smart bike trainer system that:
 
 ### 7. ButtonController (`Class_ButtonController.py`)
 - **Purpose**: Manages all button inputs and actions
-- **GPIO**: Pins 2, 3, 14, 16, 18, 20 (button inputs)
+- **GPIO**: Pins 2, 3, 16, 17, 18 (button inputs)
 - **Features**:
   - Handles all button reading and debouncing
   - Dispatches actions to appropriate controllers
@@ -183,10 +182,9 @@ The Pico Bike Trainer is a smart bike trainer system that:
   - Button functions:
     - GPIO 2: Increment gear
     - GPIO 3: Decrement gear
-    - GPIO 14: Increase incline (uphill)
-    - GPIO 16: Toggle speed unit (kmph/mph)
-    - GPIO 18: Decrease incline (downhill)
-    - GPIO 20: Control button (currently unused)
+    - GPIO 16: Increase incline (uphill)
+    - GPIO 17: Decrease incline (downhill)
+    - GPIO 18: Control button (currently unused)
 
 ### 8. View (`Class_View.py`)
 - **Purpose**: Centralized display rendering and presentation logic
@@ -226,17 +224,17 @@ The Pico Bike Trainer is a smart bike trainer system that:
 ### Speed Measurement
 - **Crank Sensor**: Returns crank RPM (pedal/crank speed) - GPIO 7
 - **Wheel Sensor**: Returns wheel RPM (flywheel/wheel speed) - GPIO 4
-- **SpeedController**: Converts RPM to speed (km/h or mph)
+- **SpeedController**: Converts RPM to speed in mph
   - Calculates speed from wheel RPM multiplied by virtual gear ratio
-  - Handles unit conversion (kmph ↔ mph)
+  - Always displays speed in mph (miles per hour)
   - Manages calibration and wheel circumference
-- **Calculated Speed**: Wheel RPM × Gear Ratio, converted to km/h or mph
+- **Calculated Speed**: Wheel RPM × Gear Ratio, converted to mph
 - Wheel RPM (WRPM) displayed
 - Configurable wheel circumference
 
 ### Display
 - **View Class**: Centralized display rendering (Model-View-Controller pattern)
-- Real-time calculated speed display (wheel RPM × gear ratio)
+- Real-time calculated speed display (wheel RPM × gear ratio) in mph
 - Current gear display
 - Wheel RPM (WRPM) display
 - Load percentage display
@@ -246,8 +244,7 @@ The Pico Bike Trainer is a smart bike trainer system that:
 
 ### User Controls
 - **Gear Selection**: Increment/Decrement gear buttons (GPIO 2/3)
-- **Incline Control**: Increase/Decrease incline buttons (GPIO 14/18, ±5% per press)
-- **Speed Unit Toggle**: Toggle unit button (GPIO 16, kmph ↔ mph)
+- **Incline Control**: Increase/Decrease incline buttons (GPIO 16/17, ±5% per press)
 
 ## Hardware Requirements
 
@@ -300,7 +297,7 @@ The Pico Bike Trainer is a smart bike trainer system that:
    - Connect crank sensor to GPIO pin 7
    - Connect wheel speed sensor to GPIO pin 4
    - Connect L298N to GPIO pins 5, 6
-   - Connect buttons to GPIO pins 2, 3, 14, 16, 18, 20
+   - Connect buttons to GPIO pins 2, 3, 16, 17, 18
 
 4. **Power On**:
    - The system will automatically calibrate on startup
@@ -323,7 +320,7 @@ The Pico Bike Trainer is a smart bike trainer system that:
 - **Load**: Automatically adjusted based on gear and incline
 
 ### Display Information
-- **Speed**: Calculated speed (wheel RPM × gear ratio) in km/h or mph
+- **Speed**: Calculated speed (wheel RPM × gear ratio) in mph
 - **WRPM**: Wheel RPM (flywheel/wheel speed)
 - **Gear**: Current gear (1-7)
 - **Load**: Current load percentage (0-100%)

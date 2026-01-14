@@ -12,6 +12,7 @@ from Class_MotorSensor import MotorSensor
 from Class_ColorHelper import ColorHelper
 from Class_View import View
 from Class_ButtonController import ButtonController
+from Class_TimerController import TimerController
 
 # =========== Configuration Constants ===========
 # Motor configuration
@@ -74,15 +75,19 @@ try:
     # Wheel speed sensor (measures flywheel/wheel speed directly - returns RPM only)
     wheel_speed_sensor = WheelSpeedSensor(gpio_pin=WHEEL_SPEED_SENSOR_GPIO)
     
-    # Speed controller (manages all speed calculations)
+    # Speed controller (manages all speed calculations - always displays mph)
     speed_controller = SpeedController(
         crank_sensor=crank_sensor,
         wheel_speed_sensor=wheel_speed_sensor,
         gear_selector=gear_selector,
-        load_controller=load_controller
+        load_controller=load_controller,
+        unit='mph'  # Always use mph
     )
     speed_controller.set_wheel_circumference(WHEEL_CIRCUMFERENCE_M)
     speed_controller.set_calibration_from_wheel_rpm(CALIBRATION_SPEED_KMH, CALIBRATION_WHEEL_RPM)
+    
+    # Initialize timer controller (manages timer functionality - MVC pattern)
+    timer_controller = TimerController()
     
     # Initialize view (handles all display logic - MVC pattern)
     back_col = 0
@@ -91,6 +96,7 @@ try:
         speed_controller=speed_controller,
         gear_selector=gear_selector,
         load_controller=load_controller,
+        timer_controller=timer_controller,
         screen_width=LCD.width,
         screen_height=LCD.height
     )
@@ -100,6 +106,7 @@ try:
         speed_controller=speed_controller,
         load_controller=load_controller,
         gear_selector=gear_selector,
+        timer_controller=timer_controller,
         view=view,
         incline_step=INCLINE_STEP,
         max_incline=MAX_INCLINE,
@@ -136,6 +143,8 @@ consecutive_errors = 0
 
 while True:
     try:
+        current_time = utime.ticks_ms()
+        
         # Check all buttons and handle actions
         button_controller.check_buttons()
         
@@ -143,7 +152,6 @@ while True:
         load_controller.apply_load()
         
         # Update display at configured interval
-        current_time = utime.ticks_ms()
         if utime.ticks_diff(current_time, last_display_update_time) >= DISPLAY_UPDATE_INTERVAL_MS:
             view.render_all()
             last_display_update_time = current_time
