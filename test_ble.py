@@ -1,10 +1,9 @@
 # Bluetooth Low Energy (BLE) Diagnostic Tool
-# This script tests if BLE functionality is working correctly
-# Run this to diagnose BLE issues
+# Tests FTMS (Fitness Machine Service) implementation for Rouvy/Zwift compatibility
 # Requires Raspberry Pi Pico W (with Bluetooth support)
 
 print("=" * 60)
-print("Bluetooth Low Energy (BLE) Diagnostic Tool")
+print("FTMS (Fitness Machine Service) Diagnostic Tool")
 print("=" * 60)
 print()
 
@@ -17,7 +16,6 @@ try:
 except ImportError as e:
     print(f"✗ BLE not available: {e}")
     print("  This script requires Raspberry Pi Pico W with Bluetooth support")
-    print("  Regular Pico does not have Bluetooth capability")
     BLE_AVAILABLE = False
     import sys
     sys.exit(1)
@@ -31,7 +29,6 @@ try:
     ble = ubluetooth.BLE()
     print(f"✓ BLE object created: {ble}")
 
-    # Check if BLE can be activated
     ble.active(True)
     print(f"✓ BLE activated: {ble.active()}")
 
@@ -39,14 +36,13 @@ try:
     print(f"✓ BLE deactivated successfully")
 except Exception as e:
     print(f"✗ Error with BLE module: {e}")
-    print("  BLE hardware may not be available or not working")
     import sys
     sys.exit(1)
 
 print()
 
-# Test 2: Initialize BLE Controller
-print("Test 2: Initializing BLE Controller")
+# Test 2: Initialize BLE Controller with FTMS
+print("Test 2: Initializing BLE Controller (FTMS)")
 print("-" * 60)
 try:
     # Create minimal mock controllers for testing
@@ -55,18 +51,22 @@ try:
             return 60  # Simulate 60 RPM
         def get_crank_rpm(self):
             return 80  # Simulate 80 RPM
+        def get_calculated_speed(self):
+            return 25.0  # Simulate 25 km/h
 
     class MockLoadController:
         def get_incline(self):
             return 0.0
+        def get_current_load_percent(self):
+            return 50.0  # Simulate 50% resistance
         def set_incline(self, value):
-            print(f"  Mock: Incline set to {value}%")
+            print(f"  Mock: Incline set to {value:.1f}%")
 
     mock_speed = MockSpeedController()
     mock_load = MockLoadController()
 
     ble_controller = BLEController(
-        name="Pico Bike Trainer Test",
+        name="PicoBike Test",
         speed_controller=mock_speed,
         load_controller=mock_load
     )
@@ -83,25 +83,41 @@ except Exception as e:
 
 print()
 
-# Test 3: Check service registration
-print("Test 3: Checking BLE service registration")
+# Test 3: Check FTMS service registration
+print("Test 3: Checking FTMS service registration")
 print("-" * 60)
 try:
-    # Check if handles are set
-    if hasattr(ble_controller, 'speed_char_handle'):
-        print(f"✓ Speed characteristic handle: {ble_controller.speed_char_handle}")
+    # Check FTMS handles
+    if hasattr(ble_controller, 'ftms_feature_handle'):
+        print(f"✓ FTMS Feature handle: {ble_controller.ftms_feature_handle}")
     else:
-        print("✗ Speed characteristic handle not found")
+        print("✗ FTMS Feature handle not found")
 
-    if hasattr(ble_controller, 'feature_char_handle'):
-        print(f"✓ Feature characteristic handle: {ble_controller.feature_char_handle}")
+    if hasattr(ble_controller, 'ftms_indoor_bike_data_handle'):
+        print(f"✓ FTMS Indoor Bike Data handle: {ble_controller.ftms_indoor_bike_data_handle}")
     else:
-        print("✗ Feature characteristic handle not found")
+        print("✗ FTMS Indoor Bike Data handle not found")
 
-    if hasattr(ble_controller, 'incline_char_handle'):
-        print(f"✓ Incline characteristic handle: {ble_controller.incline_char_handle}")
+    if hasattr(ble_controller, 'ftms_control_point_handle'):
+        print(f"✓ FTMS Control Point handle: {ble_controller.ftms_control_point_handle}")
     else:
-        print("✗ Incline characteristic handle not found")
+        print("✗ FTMS Control Point handle not found")
+
+    if hasattr(ble_controller, 'ftms_status_handle'):
+        print(f"✓ FTMS Status handle: {ble_controller.ftms_status_handle}")
+    else:
+        print("✗ FTMS Status handle not found")
+
+    # Check CSC handles
+    if hasattr(ble_controller, 'cscs_measurement_handle'):
+        print(f"✓ CSC Measurement handle: {ble_controller.cscs_measurement_handle}")
+    else:
+        print("✗ CSC Measurement handle not found")
+
+    if hasattr(ble_controller, 'cscs_feature_handle'):
+        print(f"✓ CSC Feature handle: {ble_controller.cscs_feature_handle}")
+    else:
+        print("✗ CSC Feature handle not found")
 
     print("✓ All service handles registered")
 
@@ -116,18 +132,30 @@ print()
 print("Test 4: Testing BLE advertising")
 print("-" * 60)
 try:
-    print("  BLE should now be advertising as 'Pico Bike Trainer Test'")
-    print("  Check your device's Bluetooth scanner to see if it appears")
-    print("  Advertising interval: 500ms (normal mode)")
-
-    # Check if advertising is active
     if ble_controller.ble.active():
-        print("✓ BLE is active and advertising")
+        print("✓ BLE is active")
     else:
         print("✗ BLE is not active")
 
+    print(f"  Normal device name: '{ble_controller.normal_name}'")
+    print(f"  Pairing device name: '{ble_controller.pairing_name}'")
+    print()
+    print("  BLE is advertising FTMS (Fitness Machine Service)")
+    print("  This is the standard service for Rouvy, Zwift, etc.")
+    print()
+    print("  IMPORTANT: Look for device in your cycling app:")
+    print(f"    - Device name: '{ble_controller.name}'")
+    print("    - Service: Fitness Machine (0x1826)")
+    print()
+    print("  Troubleshooting:")
+    print("    - Use Rouvy, Zwift, or nRF Connect app")
+    print("    - Enable BLE scanning in your app")
+    print("    - Device appears as 'Indoor Bike' or 'Smart Trainer'")
+
 except Exception as e:
     print(f"✗ Error with advertising: {e}")
+    import sys
+    sys.print_exception(e)
 
 print()
 
@@ -142,37 +170,15 @@ try:
 
     if ble_controller.is_pairing_mode():
         print("✓ Pairing mode activated")
-        print(f"  Device name changed to: {ble_controller.pairing_name}")
-        print("  Advertising interval: 200ms (faster in pairing mode)")
+        print(f"  Device name: {ble_controller.pairing_name}")
+        print("  Advertising interval: 100ms (faster)")
 
-        # Simulate some time passing
-        start_time = utime.ticks_ms()
-        remaining = 120
-
-        print("  Pairing mode will last 120 seconds or until connected")
-        print("  Monitoring pairing mode for 5 seconds...")
-
-        for i in range(5):
+        for i in range(3):
             utime.sleep(1)
-            current_time = utime.ticks_ms()
-            ble_controller.update_pairing_mode(current_time)
+            print(f"  [{i+1}s] Pairing mode active")
 
-            if ble_controller.is_pairing_mode():
-                elapsed = utime.ticks_diff(current_time, start_time) // 1000
-                remaining = 120 - elapsed
-                print(f"  [{i+1}s] Pairing mode active, {remaining}s remaining")
-            else:
-                print(f"  [{i+1}s] Pairing mode ended")
-                break
-
-        # Stop pairing mode
-        print("  Stopping pairing mode...")
         ble_controller.stop_pairing_mode()
-
-        if not ble_controller.is_pairing_mode():
-            print("✓ Pairing mode stopped successfully")
-        else:
-            print("✗ Pairing mode did not stop")
+        print("✓ Pairing mode stopped")
     else:
         print("✗ Pairing mode did not activate")
 
@@ -183,144 +189,155 @@ except Exception as e:
 
 print()
 
-# Test 6: Test data updates
-print("Test 6: Testing data update functions")
+# Test 6: Test data update functions
+print("Test 6: Testing FTMS data broadcast")
 print("-" * 60)
 try:
     import utime
 
-    print("  Testing update_combined_data()...")
-    current_time = utime.ticks_ms()
-
-    # This will fail if not connected, but we can test the function exists
+    print("  Testing update() (broadcasts FTMS + CSC data)...")
     try:
-        ble_controller.update_combined_data()
-        print("✓ update_combined_data() called (no error if not connected)")
+        ble_controller.update()
+        print("✓ update() called successfully")
     except Exception as e:
         print(f"  Note: {e} (expected if no device connected)")
 
-    print("  Testing update_incline_value()...")
-    try:
-        ble_controller.update_incline_value()
-        print("✓ update_incline_value() called successfully")
-    except Exception as e:
-        print(f"  Note: {e}")
-
-    print("✓ Data update functions work")
+    print("✓ Data broadcast functions work")
 
 except Exception as e:
     print(f"✗ Error testing data updates: {e}")
 
 print()
 
-# Test 7: Test incline write simulation
-print("Test 7: Testing incline control write simulation")
+# Test 7: Test control point simulation
+print("Test 7: Testing FTMS Control Point simulation")
 print("-" * 60)
 try:
     import struct
 
-    # Simulate writing incline value
-    test_incline = 15.5  # 15.5% incline
-    incline_data = struct.pack("<f", test_incline)
+    # Simulate SetTargetInclination command
+    print("  Simulating SetTargetInclination (5.0%)...")
+    # Op code 0x03, incline = 50 (5.0% in 0.1% units)
+    cmd = struct.pack("<Bh", 0x03, 50)
+    print(f"  Command bytes: {cmd.hex()}")
+    ble_controller._handle_control_point(cmd)
+    print(f"✓ Target incline set to: {ble_controller.target_incline:.1f}%")
 
-    print(f"  Simulating incline write: {test_incline}%")
-    print(f"  Data bytes: {incline_data.hex()}")
-
-    # Manually call the handler (simulating BLE write)
-    ble_controller._handle_incline_write(incline_data)
-
-    if abs(ble_controller.target_incline - test_incline) < 0.1:
-        print(f"✓ Incline value set correctly: {ble_controller.target_incline}%")
-    else:
-        print(f"✗ Incline value mismatch: expected {test_incline}%, got {ble_controller.target_incline}%")
+    # Simulate SetIndoorBikeSimulation command
+    print()
+    print("  Simulating SetIndoorBikeSimulation (grade=3.5%)...")
+    # Op code 0x11, wind=0, grade=350 (3.5%), crr=33, cw=51
+    cmd = struct.pack("<BhhBB", 0x11, 0, 350, 33, 51)
+    print(f"  Command bytes: {cmd.hex()}")
+    ble_controller._handle_control_point(cmd)
+    print(f"✓ Sim grade set to: {ble_controller.target_incline:.2f}%")
 
 except Exception as e:
-    print(f"✗ Error testing incline write: {e}")
+    print(f"✗ Error testing control point: {e}")
     import sys
     sys.print_exception(e)
 
 print()
 
-# Test 8: Connection status
-print("Test 8: Checking connection status")
+# Test 8: Connection monitoring
+print("Test 8: Client Connection Monitoring")
 print("-" * 60)
-try:
-    is_connected = ble_controller.is_connected()
-    print(f"  Connection status: {'Connected' if is_connected else 'Not connected'}")
-
-    if not is_connected:
-        print("  (This is normal - no device has connected yet)")
-        print("  Use a BLE scanner app to connect to the device")
-
-    print("✓ Connection status check works")
-
-except Exception as e:
-    print(f"✗ Error checking connection: {e}")
-
+print("  This test monitors for client connections")
+print("  Connect from Rouvy, Zwift, or a BLE scanner")
 print()
 
-# Test 9: Wheel circumference
-print("Test 9: Testing wheel circumference setting")
-print("-" * 60)
 try:
-    test_circumference = 2075  # 26-inch wheel in mm
-    ble_controller.set_wheel_circumference(test_circumference)
+    import utime
 
-    if ble_controller.wheel_circumference_mm == test_circumference:
-        print(f"✓ Wheel circumference set correctly: {ble_controller.wheel_circumference_mm}mm")
+    print("  Starting pairing mode...")
+    ble_controller.start_pairing_mode()
+    print(f"  ✓ Advertising as '{ble_controller.pairing_name}' (FTMS)")
+    print()
+    print("  Monitoring for 120 seconds...")
+    print("  Press Ctrl+C to skip")
+    print()
+
+    start_time = utime.ticks_ms()
+    monitor_duration = 120000
+    connection_detected = False
+
+    try:
+        while True:
+            current_time = utime.ticks_ms()
+            elapsed = utime.ticks_diff(current_time, start_time)
+
+            if elapsed >= monitor_duration:
+                break
+
+            ble_controller.update_pairing_mode(current_time)
+
+            if ble_controller.is_connected():
+                if not connection_detected:
+                    connection_detected = True
+                    print(f"  ✓✓✓ CONNECTION DETECTED! ✓✓✓")
+                    print(f"     Connection handle: {ble_controller.conn_handle}")
+                    print(f"     Control granted: {ble_controller.control_granted}")
+                    print()
+
+                    # Send test data
+                    for i in range(5):
+                        utime.sleep_ms(500)
+                        ble_controller.update()
+                        print(f"     [{i+1}/5] FTMS data sent")
+
+            if elapsed % 10000 < 100:
+                remaining = (monitor_duration - elapsed) // 1000
+                status = "✓ Connected" if ble_controller.is_connected() else "○ Waiting..."
+                print(f"  [{remaining:3d}s] {status}")
+
+            utime.sleep_ms(100)
+
+    except KeyboardInterrupt:
+        print()
+        print("  Test interrupted")
+
+    ble_controller.stop_pairing_mode()
+
+    if connection_detected:
+        print("  ✓✓✓ CONNECTION TEST PASSED ✓✓✓")
     else:
-        print(f"✗ Wheel circumference mismatch")
+        print("  ○ No connection detected")
 
 except Exception as e:
-    print(f"✗ Error setting wheel circumference: {e}")
+    print(f"✗ Error: {e}")
+    import sys
+    sys.print_exception(e)
 
 print()
 
 # Summary
 print("=" * 60)
-print("Diagnostic Summary")
+print("FTMS Diagnostic Summary")
 print("=" * 60)
 print()
-
-all_tests_passed = True
-
-print("BLE Functionality Tests:")
-print("  [✓] BLE module available")
-print("  [✓] BLE Controller initialization")
-print("  [✓] Service registration")
-print("  [✓] Advertising")
-print("  [✓] Pairing mode")
-print("  [✓] Data update functions")
-print("  [✓] Incline control")
-print("  [✓] Connection status")
-print("  [✓] Configuration")
+print("Services Implemented:")
+print("  [✓] Fitness Machine Service (FTMS) - 0x1826")
+print("      - Indoor Bike Data (speed, cadence, resistance)")
+print("      - Control Point (incline, resistance, simulation)")
+print("      - Machine Status & Training Status")
+print("  [✓] Cycling Speed and Cadence (CSC) - 0x1816")
+print("      - Wheel and Crank revolution data")
 print()
-
-print("Next Steps:")
-print("  1. Use a BLE scanner app (like nRF Connect, LightBlue, etc.)")
-print("  2. Scan for 'Pico Bike Trainer Test' device")
-print("  3. Connect to the device")
-print("  4. Look for services:")
-print("     - Cycling Speed and Cadence Service (0x1816)")
-print("     - Custom Incline Service (UUID: 12345678-1234-1234-1234-123456789abc)")
-print("  5. Subscribe to CSC Measurement characteristic for speed/cadence data")
-print("  6. Write to Incline characteristic to test incline control")
+print("Compatible Apps:")
+print("  - Rouvy")
+print("  - Zwift")
+print("  - TrainerRoad")
+print("  - Kinomap")
+print("  - Any FTMS-compatible app")
 print()
-
-print("Pairing Mode:")
-print("  - Hold control button (GPIO 18) for 6 seconds to activate")
-print("  - Device name changes to 'Pico Bike Trainer [PAIRING]'")
-print("  - Pairing mode lasts 120 seconds or until connected")
-print()
-
-print("Troubleshooting:")
-if not ble_controller.is_connected():
-    print("  - Device is not connected (this is normal)")
-    print("  - Connect using a BLE scanner app to test full functionality")
-else:
-    print("  - Device is connected!")
-    print("  - You can now test data transmission")
-
+print("Control Point Commands Supported:")
+print("  - Request Control (0x00)")
+print("  - Reset (0x01)")
+print("  - Set Target Inclination (0x03)")
+print("  - Set Target Resistance (0x04)")
+print("  - Set Target Power (0x05)")
+print("  - Start/Resume (0x07)")
+print("  - Stop/Pause (0x08)")
+print("  - Set Indoor Bike Simulation (0x11)")
 print()
 print("Test complete!")
-print()

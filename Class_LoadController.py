@@ -63,15 +63,16 @@ class LoadController:
             status_text: Main status message to display.
             detail_text: Optional detail message to display below main status.
         """
-        if self.lcd is None or self.rgb_color_func is None:
+        if self.lcd is None:
             return  # No display available
 
         # Clear the entire screen
         self.lcd.fill(0)  # Black background
 
         # Calculate text positions (centered)
-        text_color = self.rgb_color_func(255, 255, 255)  # White text
-        title_color = self.rgb_color_func(255, 200, 0)  # Yellow/orange for title
+        # Using direct RGB565 values: White = 0xFFFF, Orange = 0xFDA0
+        text_color = 0xFFFF  # White text
+        title_color = 0xFDA0  # Yellow/orange for title
 
         # Title
         title = "CALIBRATION"
@@ -82,8 +83,7 @@ class LoadController:
         title_y = 20
 
         try:
-            if title_color is not None:
-                self.lcd.write_text(title, int(title_x), title_y, title_size, int(title_color))
+            self.lcd.write_text(title, int(title_x), title_y, title_size, title_color)
         except (TypeError, ValueError, AttributeError):
             pass
 
@@ -95,8 +95,7 @@ class LoadController:
         status_y = 80
 
         try:
-            if text_color is not None:
-                self.lcd.write_text(status_text, int(status_x), status_y, status_size, int(text_color))
+            self.lcd.write_text(status_text, int(status_x), status_y, status_size, text_color)
         except (TypeError, ValueError, AttributeError):
             pass
 
@@ -109,8 +108,7 @@ class LoadController:
             detail_y = 120
 
             try:
-                if text_color is not None:
-                    self.lcd.write_text(detail_text, int(detail_x), detail_y, detail_size, int(text_color))
+                self.lcd.write_text(detail_text, int(detail_x), detail_y, detail_size, text_color)
             except (TypeError, ValueError, AttributeError):
                 pass
 

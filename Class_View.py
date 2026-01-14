@@ -1,3 +1,16 @@
+import utime
+
+# RGB565 color constants
+COLOR_BLACK = 0x0000
+COLOR_WHITE = 0xFFFF
+COLOR_RED = 0xF800
+COLOR_GREEN = 0x07E0
+COLOR_BLUE = 0x001F
+COLOR_YELLOW = 0xFFE0
+COLOR_ORANGE = 0xFDA0  # Yellow-orange
+COLOR_GRAY = 0xC618  # Medium gray (200,200,200)
+
+
 class View:
     """View class for managing all display logic and rendering.
 
@@ -5,15 +18,14 @@ class View:
     from business logic. Controllers and sensors provide data, View renders it.
     """
 
-    def __init__(self, lcd, rgb_color_func, back_col, speed_controller=None,
+    def __init__(self, lcd, back_col, speed_controller=None,
                  gear_selector=None, load_controller=None, timer_controller=None,
                  ble_controller=None, screen_width=240, screen_height=240):
         """Initialize the view.
 
         Args:
             lcd: LCD display object.
-            rgb_color_func: Function to convert RGB values to display color.
-            back_col: Background color for the display.
+            back_col: Background color for the display (RGB565 format).
             speed_controller: SpeedController instance (default: None).
             gear_selector: GearSelector instance (default: None).
             load_controller: LoadController instance (default: None).
@@ -23,15 +35,20 @@ class View:
             screen_height: Height of the display screen in pixels (default: 240).
         """
         self.lcd = lcd
-        self.rgb_color_func = rgb_color_func
         self.back_col = back_col
         self.speed_controller = speed_controller
         self.gear_selector = gear_selector
         self.load_controller = load_controller
         self.timer_controller = timer_controller
         self.ble_controller = ble_controller
-        self.screen_width = screen_width
-        self.screen_height = screen_height
+        
+        # Ensure screen dimensions are valid integers
+        if screen_width is None:
+            screen_width = 240
+        if screen_height is None:
+            screen_height = 240
+        self.screen_width = int(screen_width)
+        self.screen_height = int(screen_height)
 
     def render_all(self):
         """Render all display elements.
@@ -40,6 +57,17 @@ class View:
         Errors are caught and logged to prevent display failures from crashing the system.
         """
         try:
+            # Check if in pairing mode - if so, only show pairing status
+            if self.ble_controller is not None and self.ble_controller.is_pairing_mode():
+                try:
+                    self._render_pairing_status()
+                    # Show the display and return early - don't render other elements
+                    self.lcd.show()
+                    return
+                except Exception as e:
+                    print(f"Error rendering pairing status: {e}")
+
+            # Normal rendering (not in pairing mode)
             # Clear screen
             self.lcd.fill(self.back_col)
 
@@ -51,30 +79,16 @@ class View:
                     print(f"Error rendering speed: {e}")
                     # Try to show error on display
                     try:
-                        error_color = self.rgb_color_func(255, 0, 0)
-                        if error_color is not None:
-                            self.lcd.write_text("Speed Error", 50, 50, 2, int(error_color))
+                        self.lcd.write_text("Speed Error", 50, 50, 2, COLOR_RED)
                     except:
                         pass
 
-            # Render pairing status (if in pairing mode, show prominently)
-            if self.ble_controller is not None:
+            # Render timer (only when not in pairing mode)
+            if self.timer_controller is not None:
                 try:
-                    if self.ble_controller.is_pairing_mode():
-                        self._render_pairing_status()
-                    else:
-                        # Render timer only when not in pairing mode
-                        if self.timer_controller is not None:
-                            self._render_timer()
+                    self._render_timer()
                 except Exception as e:
-                    print(f"Error rendering pairing status: {e}")
-            else:
-                # Render timer if no BLE controller
-                if self.timer_controller is not None:
-                    try:
-                        self._render_timer()
-                    except Exception as e:
-                        print(f"Error rendering timer: {e}")
+                    print(f"Error rendering timer: {e}")
 
             # Render gear selector
             if self.gear_selector is not None:
@@ -90,9 +104,7 @@ class View:
             # Try to show error message
             try:
                 self.lcd.fill(0)
-                error_color = self.rgb_color_func(255, 0, 0)
-                if error_color is not None:
-                    self.lcd.write_text("Display Error", 30, 100, 2, int(error_color))
+                self.lcd.write_text("Display Error", 30, 100, 2, COLOR_RED)
                 self.lcd.show()
             except:
                 pass
@@ -105,6 +117,10 @@ class View:
         # Get calculated speed (wheel RPM * gear ratio)
         calculated_speed = self.speed_controller.get_calculated_speed()
         # wheel_rpm = self.speed_controller.get_wheel_rpm()  # Not currently used (commented out display)
+
+        # Validate calculated_speed
+        if calculated_speed is None:
+            calculated_speed = 0.0
 
         # Unit label (always mph)
         unit_label = "mph"
@@ -119,15 +135,16 @@ class View:
 
         label_text = "Speed-" + unit_label
         try:
-            label_color = self.rgb_color_func(255, 255, 255)
-            if label_color is not None:
-                self.lcd.write_text(label_text, 0, label_y, 3, int(label_color))
+            self.lcd.write_text(label_text, 0, label_y, 3, COLOR_WHITE)
         except (TypeError, ValueError, AttributeError) as e:
             print(f"Error rendering speed label: {e}")
             # Continue rendering other elements
 
         # Format speed value
-        speed_str = "{:.1f}".format(round(calculated_speed, 1))
+        try:
+            speed_str = "{:.1f}".format(round(calculated_speed, 1))
+        except (TypeError, ValueError):
+            speed_str = "0.0"
         char_width_base = 8
         font_size = 7
         char_width = char_width_base * font_size
@@ -135,9 +152,7 @@ class View:
         speed_x = max(0, (self.screen_width - speed_text_width) // 2)
 
         try:
-            speed_color = self.rgb_color_func(255, 255, 255)
-            if speed_color is not None:
-                self.lcd.write_text(speed_str, int(speed_x), speed_y, font_size, int(speed_color))
+            self.lcd.write_text(speed_str, int(speed_x), speed_y, font_size, COLOR_WHITE)
         except (TypeError, ValueError, AttributeError) as e:
             print(f"Error rendering speed value: {e}")
             # Continue rendering other elements
@@ -152,9 +167,8 @@ class View:
             # wheel_rpm_text_width = len(wheel_rpm_text) * rpm_char_width
             # wheel_rpm_x = (self.screen_width - wheel_rpm_text_width) // 2
 
-            rpm_color = self.rgb_color_func(200, 200, 200)
-            # if rpm_color is not None:
-            #     self.lcd.write_text(wheel_rpm_text, int(wheel_rpm_x), int(rpm_y), 2, int(rpm_color))
+            # rpm_color = COLOR_GRAY
+            # self.lcd.write_text(wheel_rpm_text, int(wheel_rpm_x), int(rpm_y), 2, rpm_color)
 
             # Display Road load value if load controller is available - COMMENTED OUT
             if self.load_controller is not None:
@@ -171,19 +185,25 @@ class View:
 
                     # Display incline value
                     incline_percent = self.load_controller.get_incline()
+                    # Validate incline_percent
+                    if incline_percent is None:
+                        incline_percent = 0.0
+                    
                     incline_y = rpm_y + 18  # Changed from load_y + 18 since load is commented out
-                    if incline_percent > 0:
-                        incline_text = "Hill: +" + str(int(incline_percent))
-                    elif incline_percent < 0:
-                        incline_text = "Hill: " + str(int(incline_percent))
-                    else:
+                    try:
+                        if incline_percent > 0:
+                            incline_text = "Hill: +" + str(int(incline_percent))
+                        elif incline_percent < 0:
+                            incline_text = "Hill: " + str(int(incline_percent))
+                        else:
+                            incline_text = "Hill: 0"
+                    except (TypeError, ValueError):
                         incline_text = "Hill: 0"
 
                     incline_text_width = len(incline_text) * rpm_char_width
                     incline_x = (self.screen_width - incline_text_width) // 2
 
-                    if rpm_color is not None:
-                        self.lcd.write_text(incline_text, int(incline_x), int(incline_y), 2, int(rpm_color))
+                    self.lcd.write_text(incline_text, int(incline_x), int(incline_y), 2, COLOR_GRAY)
                 except (TypeError, ValueError, AttributeError) as e:
                     print(f"Error rendering load/incline: {e}")
                     # Continue rendering other elements
@@ -196,7 +216,6 @@ class View:
         if self.timer_controller is None:
             return
 
-        import utime
         current_time = utime.ticks_ms()
         elapsed_ms = self.timer_controller.get_elapsed_ms(current_time)
 
@@ -237,12 +256,10 @@ class View:
             timer_value_x = label_x + label_width + 4  # Small gap after label
             timer_value_y = label_y
 
-            timer_color = self.rgb_color_func(200, 200, 200)
-            if timer_color is not None:
-                # Display label
-                self.lcd.write_text(timer_label, label_x, label_y, timer_label_size, int(timer_color))
-                # Display timer value
-                self.lcd.write_text(timer_text, int(timer_value_x), timer_value_y, timer_value_size, int(timer_color))
+            # Display label
+            self.lcd.write_text(timer_label, label_x, label_y, timer_label_size, COLOR_GRAY)
+            # Display timer value
+            self.lcd.write_text(timer_text, int(timer_value_x), timer_value_y, timer_value_size, COLOR_GRAY)
         except (TypeError, ValueError, AttributeError) as e:
             print(f"Error rendering timer: {e}")
 
@@ -251,12 +268,10 @@ class View:
         if self.ble_controller is None:
             return
 
-        if self.rgb_color_func is None:
-            return  # Cannot render without color function
-
-        import utime
-
         try:
+            # Clear screen before rendering pairing status
+            self.lcd.fill(self.back_col)
+
             # Calculate remaining time
             current_time = utime.ticks_ms()
             pairing_start = self.ble_controller.get_pairing_mode_start_time()
@@ -279,32 +294,14 @@ class View:
             title = "BLE PAIRING"
             status_text = f"Time: {remaining_sec:3d}s"
 
-            # Default white color in RGB565 format (0xFFFF = white)
-            DEFAULT_WHITE = 0xFFFF
-
             # Check if connected
             if self.ble_controller.is_connected():
                 status_text = "CONNECTED!"
-                try:
-                    status_color = self.rgb_color_func(0, 255, 0)  # Green
-                    if status_color is None:
-                        status_color = DEFAULT_WHITE
-                except Exception:
-                    status_color = DEFAULT_WHITE
+                status_color = COLOR_GREEN
             else:
-                try:
-                    status_color = self.rgb_color_func(255, 200, 0)  # Yellow/Orange
-                    if status_color is None:
-                        status_color = DEFAULT_WHITE
-                except Exception:
-                    status_color = DEFAULT_WHITE
+                status_color = COLOR_ORANGE  # Yellow/Orange
 
-            try:
-                title_color = self.rgb_color_func(255, 255, 255)  # White
-                if title_color is None:
-                    title_color = DEFAULT_WHITE
-            except Exception:
-                title_color = DEFAULT_WHITE
+            title_color = COLOR_WHITE
 
             # Calculate positions (centered)
             char_width_base = 8
@@ -323,29 +320,17 @@ class View:
             status_x = (self.screen_width - status_width) // 2
             status_y = title_y + (title_size * 8) + 10  # Below title
 
-            # Draw title - use default white if color is None
+            # Draw title
             try:
-                color_value = int(title_color) if title_color is not None else DEFAULT_WHITE
-                self.lcd.write_text(title, title_x, title_y, title_size, color_value)
+                self.lcd.write_text(title, title_x, title_y, title_size, title_color)
             except (TypeError, ValueError, AttributeError) as e:
                 print(f"Error rendering pairing title: {e}")
-                # Fallback to default white
-                try:
-                    self.lcd.write_text(title, title_x, title_y, title_size, DEFAULT_WHITE)
-                except:
-                    pass
 
-            # Draw status - use default white if color is None
+            # Draw status
             try:
-                color_value = int(status_color) if status_color is not None else DEFAULT_WHITE
-                self.lcd.write_text(status_text, status_x, status_y, status_size, color_value)
+                self.lcd.write_text(status_text, status_x, status_y, status_size, status_color)
             except (TypeError, ValueError, AttributeError) as e:
                 print(f"Error rendering pairing status: {e}")
-                # Fallback to default white
-                try:
-                    self.lcd.write_text(status_text, status_x, status_y, status_size, DEFAULT_WHITE)
-                except:
-                    pass
 
             # Draw connection status
             if not self.ble_controller.is_connected():
@@ -357,22 +342,9 @@ class View:
                 inst_y = status_y + (status_size * 8) + 8
 
                 try:
-                    inst_color = self.rgb_color_func(200, 200, 200)
-                    if inst_color is None:
-                        inst_color = DEFAULT_WHITE
-                except Exception:
-                    inst_color = DEFAULT_WHITE
-
-                try:
-                    color_value = int(inst_color) if inst_color is not None else DEFAULT_WHITE
-                    self.lcd.write_text(instruction, inst_x, inst_y, inst_size, color_value)
+                    self.lcd.write_text(instruction, inst_x, inst_y, inst_size, COLOR_GRAY)
                 except (TypeError, ValueError, AttributeError) as e:
                     print(f"Error rendering pairing instruction: {e}")
-                    # Fallback to default white
-                    try:
-                        self.lcd.write_text(instruction, inst_x, inst_y, inst_size, DEFAULT_WHITE)
-                    except:
-                        pass
 
         except (TypeError, ValueError, AttributeError) as e:
             print(f"Error rendering pairing status: {e}")
@@ -401,22 +373,20 @@ class View:
                 # Draw white box
                 self.lcd.fill_rect(x_pos, display_y,
                                   self.gear_selector.gear_box_width, self.gear_selector.gear_box_height,
-                                  self.rgb_color_func(255, 255, 255))
+                                  COLOR_WHITE)
                 # Draw gear number in black (inverted)
                 gear_str = str(gear_num)
                 # Center the text in the box (size 2 = 8*2 = 16 pixels per character)
                 text_width = 16 * len(gear_str)
                 text_x = x_pos + (self.gear_selector.gear_box_width - text_width) // 2
-                self.lcd.write_text(gear_str, text_x, display_y + 6, 2,
-                                   self.rgb_color_func(0, 0, 0))
+                self.lcd.write_text(gear_str, text_x, display_y + 6, 2, COLOR_BLACK)
             else:
                 # Unselected gear: normal text on background
                 gear_str = str(gear_num)
                 # Center the text in the box (size 2 = 8*2 = 16 pixels per character)
                 text_width = 16 * len(gear_str)
                 text_x = x_pos + (self.gear_selector.gear_box_width - text_width) // 2
-                self.lcd.write_text(gear_str, text_x, display_y + 6, 2,
-                                   self.rgb_color_func(255, 255, 255))
+                self.lcd.write_text(gear_str, text_x, display_y + 6, 2, COLOR_WHITE)
 
     def display_calibration_status(self, status_text, detail_text=None):
         """Display calibration status on the screen.
@@ -429,8 +399,8 @@ class View:
         self.lcd.fill(self.back_col)
 
         # Calculate text positions (centered)
-        text_color = self.rgb_color_func(255, 255, 255)  # White text
-        title_color = self.rgb_color_func(255, 200, 0)  # Yellow/orange for title
+        text_color = COLOR_WHITE  # White text
+        title_color = COLOR_ORANGE  # Yellow/orange for title
 
         # Title
         title = "CALIBRATION"
@@ -441,8 +411,7 @@ class View:
         title_y = 20
 
         try:
-            if title_color is not None:
-                self.lcd.write_text(title, int(title_x), title_y, title_size, int(title_color))
+            self.lcd.write_text(title, int(title_x), title_y, title_size, title_color)
         except (TypeError, ValueError, AttributeError):
             pass
 
@@ -454,8 +423,7 @@ class View:
         status_y = 80
 
         try:
-            if text_color is not None:
-                self.lcd.write_text(status_text, int(status_x), status_y, status_size, int(text_color))
+            self.lcd.write_text(status_text, int(status_x), status_y, status_size, text_color)
         except (TypeError, ValueError, AttributeError):
             pass
 
@@ -468,8 +436,7 @@ class View:
             detail_y = 120
 
             try:
-                if text_color is not None:
-                    self.lcd.write_text(detail_text, int(detail_x), detail_y, detail_size, int(text_color))
+                self.lcd.write_text(detail_text, int(detail_x), detail_y, detail_size, text_color)
             except (TypeError, ValueError, AttributeError):
                 pass
 

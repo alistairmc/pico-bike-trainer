@@ -173,7 +173,29 @@ class LCD1Inch3(framebuf.FrameBuffer):
             size: Font size multiplier for the text.
             color: Color of text to be displayed.
         """
-        background = self.pixel(x,y)
+        # Validate parameters
+        if x is None or y is None:
+            x = 0 if x is None else int(x)
+            y = 0 if y is None else int(y)
+        else:
+            x = int(x)
+            y = int(y)
+        
+        if color is None:
+            color = 0xFFFF  # Default to white
+        else:
+            color = int(color)
+        
+        # Get background color, default to black if None
+        try:
+            background = self.pixel(x, y)
+            if background is None:
+                background = 0x0000  # Black
+            else:
+                background = int(background)
+        except:
+            background = 0x0000  # Black
+        
         info = []
 
         # Creating reference charaters to read their values

@@ -1,10 +1,11 @@
 # Pico Bike Trainer
 
-A Raspberry Pi Pico-based bike trainer system that provides realistic resistance simulation based on gear selection and incline settings. The system uses hall sensors to measure speed and motor position, and controls resistance through an L298N motor controller.
+A Raspberry Pi Pico W-based smart bike trainer system that provides realistic resistance simulation based on gear selection and incline settings. The system uses hall sensors to measure speed and motor position, controls resistance through an L298N motor controller, and broadcasts data via Bluetooth Low Energy (BLE) for compatibility with cycling apps like **Rouvy**, **Zwift**, and **TrainerRoad**.
 
 ## Table of Contents
 
 - [Overview](#overview)
+- [Bluetooth Connectivity](#bluetooth-connectivity)
 - [GPIO Pin Assignments](#gpio-pin-assignments)
 - [System Architecture](#system-architecture)
 - [Components](#components)
@@ -24,6 +25,83 @@ The Pico Bike Trainer is a smart bike trainer system that:
 - Simulates incline/decline (-100% to +100%)
 - Displays real-time metrics on a 240x240 LCD screen
 - Controls resistance using an L298N motor controller
+- **Broadcasts via Bluetooth** for use with cycling apps (Rouvy, Zwift, etc.)
+- **Receives incline commands** from apps for realistic hill simulation
+
+## Bluetooth Connectivity
+
+### Overview
+
+The Pico Bike Trainer implements the **Fitness Machine Service (FTMS)** - the standard Bluetooth protocol used by smart trainers. This allows the trainer to work with popular cycling apps.
+
+### Compatible Apps
+
+| App | Features |
+|-----|----------|
+| **Rouvy** | Full support - speed, cadence, resistance control, hill simulation |
+| **Zwift** | Full support - speed, cadence, power display, ERG mode |
+| **TrainerRoad** | Full support - structured workouts, ERG mode |
+| **Kinomap** | Full support - video routes, resistance control |
+| **Any FTMS app** | Standard FTMS protocol compatibility |
+
+### BLE Services Implemented
+
+| Service | UUID | Description |
+|---------|------|-------------|
+| **Fitness Machine (FTMS)** | 0x1826 | Primary smart trainer service |
+| **Cycling Speed & Cadence (CSC)** | 0x1816 | Basic speed/cadence for simple apps |
+
+### FTMS Characteristics
+
+| Characteristic | UUID | Function |
+|----------------|------|----------|
+| Feature | 0x2ACC | Advertises trainer capabilities |
+| Indoor Bike Data | 0x2AD2 | Broadcasts speed, cadence, resistance |
+| Control Point | 0x2AD9 | Receives commands from apps |
+| Machine Status | 0x2ADA | Notifies status changes |
+| Training Status | 0x2AD3 | Current workout state |
+| Resistance Range | 0x2AD6 | 1-100% supported |
+| Inclination Range | 0x2AD5 | -20% to +20% supported |
+
+### Supported Control Commands
+
+When connected to an app like Rouvy, the trainer responds to these commands:
+
+| Command | Op Code | Description |
+|---------|---------|-------------|
+| Request Control | 0x00 | App requests control of trainer |
+| Reset | 0x01 | Reset trainer to default state |
+| Set Target Inclination | 0x03 | Set hill grade (-20% to +20%) |
+| Set Target Resistance | 0x04 | Set resistance level (0-100%) |
+| Set Target Power | 0x05 | ERG mode - target wattage |
+| Start/Resume | 0x07 | Start workout |
+| Stop/Pause | 0x08 | Pause workout |
+| **Indoor Bike Simulation** | 0x11 | **Hill simulation with grade, wind, etc.** |
+
+### Pairing Mode
+
+To connect the trainer to an app:
+
+1. **Hold Control Button (GPIO 18) for 6 seconds** to enter pairing mode
+2. The display shows "BLE PAIRING" with a countdown (120 seconds)
+3. Open your cycling app and scan for sensors
+4. Look for device named **"PicoBike PAIR"**
+5. Connect to the trainer
+6. Pairing mode ends automatically when connected
+
+### Indoor Bike Simulation (How Rouvy Works)
+
+When riding a route in Rouvy, the app sends **Indoor Bike Simulation Parameters** (Op Code 0x11):
+
+```
+Parameters:
+- Wind Speed: Head/tail wind in m/s
+- Grade: Hill grade in 0.01% units (e.g., 350 = 3.5% climb)
+- Rolling Resistance Coefficient (CRR)
+- Wind Resistance Coefficient (CW)
+```
+
+The trainer extracts the **grade** value and adjusts resistance accordingly, simulating the feel of climbing or descending.
 
 ## GPIO Pin Assignments
 
@@ -58,7 +136,14 @@ The Pico Bike Trainer is a smart bike trainer system that:
 | **3** | Decrement Gear | INPUT | Decrement gear (PULL_UP) |
 | **16** | Increase Incline | INPUT | Increase incline/uphill (PULL_UP) |
 | **17** | Decrease Incline | INPUT | Decrease incline/downhill (PULL_UP) |
-| **18** | Control Button | INPUT | Control button (PULL_UP, currently unused) |
+| **18** | Control Button | INPUT | Timer & BLE control (PULL_UP) - see below |
+
+### Control Button (GPIO 18) Functions
+| Press Duration | Action |
+|----------------|--------|
+| Short press | Start/pause timer |
+| 3 second hold | Reset timer (when paused) |
+| 6 second hold | Enter BLE pairing mode (120 seconds) |
 
 ### GPIO Summary
 - **Total GPIO Pins Used**: 18
@@ -206,6 +291,27 @@ The Pico Bike Trainer is a smart bike trainer system that:
   - PWM backlight control
   - FrameBuffer-based drawing
 
+### 10. BLEController (`Class_BLEController.py`)
+- **Purpose**: Bluetooth Low Energy communication for cycling apps
+- **GPIO**: None (uses Pico W wireless hardware)
+- **Features**:
+  - Implements FTMS (Fitness Machine Service) - UUID 0x1826
+  - Implements CSC (Cycling Speed and Cadence) - UUID 0x1816
+  - Broadcasts Indoor Bike Data (speed, cadence, resistance)
+  - Receives control commands from apps (incline, resistance, ERG mode)
+  - Supports Indoor Bike Simulation for realistic hill feel
+  - Pairing mode with 120-second timeout
+  - Compatible with Rouvy, Zwift, TrainerRoad, etc.
+
+### 11. TimerController (`Class_TimerController.py`)
+- **Purpose**: Workout timer/stopwatch functionality
+- **GPIO**: None (software controller)
+- **Features**:
+  - Start/pause/resume timer
+  - Reset timer (when paused)
+  - Formats time as MM:SS
+  - Displayed on LCD above gear selector
+
 ## Features
 
 ### Load Control
@@ -236,20 +342,37 @@ The Pico Bike Trainer is a smart bike trainer system that:
 - **View Class**: Centralized display rendering (Model-View-Controller pattern)
 - Real-time calculated speed display (wheel RPM × gear ratio) in mph
 - Current gear display
-- Wheel RPM (WRPM) display
-- Load percentage display
+- Workout timer display (MM:SS format)
 - Incline percentage display
+- BLE pairing status display
 - 4 Hz update rate (250ms intervals)
 - All display logic separated from business logic
 
 ### User Controls
 - **Gear Selection**: Increment/Decrement gear buttons (GPIO 2/3)
 - **Incline Control**: Increase/Decrease incline buttons (GPIO 16/17, ±5% per press)
+- **Timer Control**: Control button short press to start/pause (GPIO 18)
+- **Timer Reset**: Control button 3-second hold to reset (when paused)
+- **BLE Pairing**: Control button 6-second hold to enter pairing mode
+
+### Bluetooth Connectivity
+- **FTMS Service**: Full Fitness Machine Service implementation
+- **CSC Service**: Cycling Speed and Cadence for basic apps
+- **Indoor Bike Data**: Broadcasts speed, cadence, resistance
+- **Control Point**: Receives commands from apps
+- **Hill Simulation**: Responds to grade changes from Rouvy/Zwift
+- **Pairing Mode**: 120-second discoverable mode for easy connection
+
+### Timer
+- **Workout Timer**: Stopwatch functionality for tracking workout duration
+- **States**: Stopped, Running, Paused
+- **Display**: Shows MM:SS format above gear selector
+- **Controls**: Start/pause (short press), Reset (3-sec hold when paused)
 
 ## Hardware Requirements
 
 ### Required Components
-1. **Raspberry Pi Pico** (or Pico W)
+1. **Raspberry Pi Pico W** (required for Bluetooth - regular Pico does not have BLE)
 2. **LCD Display**: 1.3" 240x240 SPI LCD
 3. **L298N Motor Driver**: For controlling resistance motor
 4. **Hall Sensors**: 
@@ -259,6 +382,8 @@ The Pico Bike Trainer is a smart bike trainer system that:
    - Wheel speed sensor (GPIO 4)
 5. **Buttons/Joystick**: For user input
 6. **Resistance Motor**: Controlled by L298N
+
+> **Note**: The Raspberry Pi **Pico W** is required for Bluetooth connectivity. The regular Pico does not have wireless capabilities. Without a Pico W, the trainer will still function but without BLE support for cycling apps.
 
 ### Motor Specifications
 - **Motor Rotations per Crank Rotation**: 1000:1 ratio
@@ -315,16 +440,25 @@ The Pico Bike Trainer is a smart bike trainer system that:
 
 ### Normal Operation
 - **Speed**: Automatically calculated from hall sensor
-- **Gear Changes**: Use Left/Right buttons
-- **Incline Adjustment**: Use Up/Down buttons
+- **Gear Changes**: Use gear increment/decrement buttons (GPIO 2/3)
+- **Incline Adjustment**: Use incline up/down buttons (GPIO 16/17)
 - **Load**: Automatically adjusted based on gear and incline
+- **Timer**: Control button (GPIO 18) to start/pause, 3-sec hold to reset
+
+### Connecting to Cycling Apps (Rouvy, Zwift, etc.)
+1. **Enter Pairing Mode**: Hold control button (GPIO 18) for 6 seconds
+2. **Display Shows**: "BLE PAIRING" with countdown timer
+3. **Open App**: Launch Rouvy, Zwift, or other FTMS-compatible app
+4. **Scan for Sensors**: In the app, search for trainers/sensors
+5. **Connect**: Select "PicoBike PAIR" from the device list
+6. **Start Riding**: The app will now control resistance based on the route
 
 ### Display Information
 - **Speed**: Calculated speed (wheel RPM × gear ratio) in mph
-- **WRPM**: Wheel RPM (flywheel/wheel speed)
-- **Gear**: Current gear (1-7)
-- **Load**: Current load percentage (0-100%)
-- **Incline**: Current incline percentage (-100% to +100%)
+- **Timer**: Workout timer (MM:SS format) - above gear selector
+- **Gear**: Current gear (1-7) - graphical selector
+- **Incline**: Current incline percentage (-20% to +20%)
+- **BLE Status**: Shows "BLE PAIRING" when in pairing mode
 
 ## Configuration
 
@@ -409,9 +543,73 @@ Total Load = round(Total Load / 5%) * 5%  // Quantize to 5% increments
 - Check L298N motor control
 - Ensure startup calibration completed successfully
 
+### Bluetooth Not Working
+- **Device not appearing in app**:
+  - Ensure you're using a **Pico W** (regular Pico has no Bluetooth)
+  - Enter pairing mode (hold control button for 6 seconds)
+  - Look for device name "PicoBike PAIR"
+  - Make sure you're using an FTMS-compatible app
+  - Try restarting the Pico and the app
+
+- **App not showing trainer**:
+  - Ensure app is searching for "Trainers" or "Smart Trainers" (not just sensors)
+  - Some apps need location services enabled for BLE scanning
+  - Try the nRF Connect app to verify BLE is broadcasting
+
+- **Connection drops**:
+  - Stay within Bluetooth range (~10 meters)
+  - Reduce interference from other devices
+  - Check that the main loop is running (display updating)
+
+- **Resistance not changing with hills**:
+  - Verify the app is sending FTMS commands (check console output)
+  - Ensure control is granted (app sends RequestControl first)
+  - Check that load_controller is properly connected to BLE controller
+
+### Timer Not Working
+- **Timer not starting**: Press control button briefly (GPIO 18)
+- **Timer not resetting**: Must be paused first, then hold for 3 seconds
+- **Timer not displaying**: Check View class is receiving timer_controller
+
+## Credits & Acknowledgments
+
+### SmartSpin2k Project
+
+The Bluetooth FTMS (Fitness Machine Service) implementation in this project is based on and inspired by the **SmartSpin2k** project:
+
+- **Project**: [SmartSpin2k](https://github.com/doudar/SmartSpin2k)
+- **Authors**: Anthony Doud & Joel Baranick
+- **License**: GPL-2.0 (GNU General Public License v2)
+
+The following code patterns and definitions were adapted from SmartSpin2k:
+- FTMS flag definitions and constants
+- Control Point command handling
+- Indoor Bike Data packet structure
+- FTMS characteristic UUIDs and service structure
+
+SmartSpin2k is an excellent open-source project that transforms spin bikes into smart trainers. If you're looking for an ESP32-based solution with more features (power meter support, ERG mode, companion app), check out their project!
+
+### Bluetooth Specifications
+
+The FTMS implementation follows the official Bluetooth SIG specification:
+- [Fitness Machine Service 1.0](https://www.bluetooth.com/specifications/specs/fitness-machine-service-1-0/)
+
 ## License
 
-This project is provided as-is for educational and personal use.
+This project is licensed under the **GNU General Public License v3.0 (GPL-3.0)**.
+
+See the [LICENSE](LICENSE) file for the full license text.
+
+### Third-Party Code Attribution
+
+The file `Class_BLEController.py` contains code adapted from the **SmartSpin2k** project, which is licensed under GPL-2.0. Per GPL compatibility rules, this code is incorporated under the GPL-3.0 license of this project with the following attribution:
+
+```
+Original SmartSpin2k FTMS implementation:
+Copyright (C) 2020 Anthony Doud & Joel Baranick
+https://github.com/doudar/SmartSpin2k
+Original License: GPL-2.0-only
+```
 
 ## Author
 
@@ -434,11 +632,31 @@ The codebase follows an MVC architecture:
 
 ## Version History
 
-- **Current Version**: MVC architecture with View and ButtonController classes
+- **Current Version**: Full FTMS Bluetooth support with MVC architecture
 - **Features**: 
-  - Gear-based load control
-  - Incline simulation (-100% to +100%)
-  - Real-time speed measurement from hardware sensors only
+  - **Bluetooth Low Energy (BLE)** - FTMS service for Rouvy, Zwift, etc.
+  - **Indoor Bike Simulation** - Receives hill grade from apps
+  - **Workout Timer** - Start/pause/reset stopwatch
+  - Gear-based load control (7 gears)
+  - Incline simulation (-20% to +20%)
+  - Real-time speed measurement from hardware sensors
   - Centralized display logic (View class)
   - Centralized input handling (ButtonController class)
-  - No simulation or testing modes - hardware sensors required
+  - Pairing mode for easy Bluetooth connection
+
+## Test Scripts
+
+Several test scripts are included for debugging:
+
+| Script | Purpose |
+|--------|---------|
+| `test_ble.py` | Test FTMS Bluetooth service and connection |
+| `test_buttons.py` | Test button inputs and debouncing |
+| `test_speed_sensors.py` | Test wheel and crank sensors |
+| `test_motor_sensors.py` | Test motor position and calibration |
+| `test_calculate_gear_ratio.py` | Verify gear ratio calculations |
+
+Run a test script:
+```python
+exec(open('test_ble.py').read())
+```
