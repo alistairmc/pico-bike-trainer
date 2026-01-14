@@ -48,9 +48,9 @@ print("Initializing load controller...")
 gear_selector = GearSelector(num_gears=7, min_ratio=1.0, max_ratio=4.5)
 motor_sensor = MotorSensor(motor_count_gpio_pin=0, motor_stop_gpio_pin=1)
 load_controller = LoadController(
-    l298n_in1_pin=5, 
-    l298n_in2_pin=6, 
-    gear_selector=gear_selector, 
+    l298n_in1_pin=5,
+    l298n_in2_pin=6,
+    gear_selector=gear_selector,
     motor_sensor=motor_sensor
 )
 
@@ -67,10 +67,10 @@ if load_controller.motor_sensor is not None:
     else:
         # Temporarily disable interrupt to avoid false positives
         load_controller.motor_sensor.disable_stop_interrupt()
-        
+
         # Move motor forward until stop trigger is detected
         load_controller.set_motor_direction_forward()
-        
+
         # Wait for stop trigger with timeout
         stop_detected = False
         debounce_count = 0
@@ -78,54 +78,54 @@ if load_controller.motor_sensor is not None:
         timeout_ms = 120000  # 2 minute timeout
         start_time = utime.ticks_ms()
         last_status_time = start_time
-        
+
         print("  Searching for stop position...")
-        
+
         while debounce_count < required_high_readings:
             elapsed = utime.ticks_diff(utime.ticks_ms(), start_time)
-            
+
             # Show progress every 5 seconds
             if utime.ticks_diff(utime.ticks_ms(), last_status_time) >= 5000:
                 elapsed_sec = elapsed // 1000
                 print(f"  Still searching... {elapsed_sec}s elapsed")
                 last_status_time = utime.ticks_ms()
-            
+
             if elapsed > timeout_ms:
                 print(f"  Timeout: Stop trigger not detected after {elapsed // 1000}s")
                 load_controller.stop_motor()
                 load_controller.motor_sensor.enable_stop_interrupt()
                 break
-            
+
             pin_value = load_controller.motor_sensor.motor_stop_pin.value()
             if pin_value == 1:  # HIGH - stop pulse detected
                 debounce_count += 1
-        else:
+            else:
                 debounce_count = 0
-            
+
             utime.sleep_ms(10)
-        
+
         if debounce_count >= required_high_readings:
             # Stop trigger detected
             load_controller.stop_motor()
             utime.sleep_ms(300)  # Pause to ensure motor stops
-            
+
             # Sync position to sensor (reset to 0)
             load_controller.motor_sensor.sync_position_to_sensor()
             stop_detected = True
             elapsed = utime.ticks_diff(utime.ticks_ms(), start_time)
             print(f"  Stop trigger detected! (took {elapsed // 1000}s)")
-        
+
         # Re-enable interrupt handler
         load_controller.motor_sensor.enable_stop_interrupt()
-        
+
         if stop_detected:
             print("  Load set to minimum (0% - stop position)")
-    else:
+        else:
             print("  Warning: Could not reach stop position")
-        print("  Setting gear to 1 and incline to -100% as fallback...")
-        gear_selector.current_gear = 1
-        load_controller.set_incline(-100.0)
-        load_controller.apply_load()
+            print("  Setting gear to 1 and incline to -100% as fallback...")
+            gear_selector.current_gear = 1
+            load_controller.set_incline(-100.0)
+            load_controller.apply_load()
 else:
     # No motor sensor, use gear and incline method
     print("  No motor sensor - using gear/incline method...")
@@ -163,12 +163,12 @@ print("-" * 60)
 
 while utime.ticks_diff(utime.ticks_ms(), start_time) < collection_duration:
     elapsed = utime.ticks_diff(utime.ticks_ms(), start_time)
-    
+
     # Sample data every sample_interval
     if utime.ticks_diff(utime.ticks_ms(), last_sample_time) >= sample_interval:
         crank_rpm = crank_sensor.get_rpm()
         wheel_rpm = wheel_speed_sensor.get_rpm()
-        
+
         # Only calculate ratio if both sensors have valid readings AND crank is actively being pedaled
         # This filters out cases where the wheel is coasting due to flywheel inertia
         if crank_rpm >= min_crank_rpm_threshold and wheel_rpm > 0:
@@ -184,15 +184,15 @@ while utime.ticks_diff(utime.ticks_ms(), start_time) < collection_duration:
         else:
             # No valid readings from either sensor
             invalid_samples += 1
-        
+
         last_sample_time = utime.ticks_ms()
-    
+
     # Display status every update_interval
     if utime.ticks_diff(utime.ticks_ms(), last_display_time) >= update_interval:
         elapsed_sec = elapsed // 1000
         current_crank_rpm = crank_sensor.get_rpm()
         current_wheel_rpm = wheel_speed_sensor.get_rpm()
-        
+
         if current_crank_rpm >= min_crank_rpm_threshold and current_wheel_rpm > 0:
             current_ratio = current_wheel_rpm / current_crank_rpm
             status = "Pedaling"
@@ -207,11 +207,11 @@ while utime.ticks_diff(utime.ticks_ms(), start_time) < collection_duration:
                 status = "No crank"
             else:
                 status = "No wheel"
-        
+
         print(f"{elapsed_sec:4d}s  {current_crank_rpm:4d}   {current_wheel_rpm:4d}   {current_ratio:7.3f}  {status}")
-        
+
         last_display_time = utime.ticks_ms()
-    
+
     utime.sleep_ms(50)
 
 print()
@@ -240,36 +240,36 @@ else:
     min_ratio = min(ratios)
     max_ratio = max(ratios)
     avg_ratio = sum(ratios) / len(ratios)
-    
+
     # Calculate median
     sorted_ratios = sorted(ratios)
     if len(sorted_ratios) % 2 == 0:
         median_ratio = (sorted_ratios[len(sorted_ratios)//2 - 1] + sorted_ratios[len(sorted_ratios)//2]) / 2
     else:
         median_ratio = sorted_ratios[len(sorted_ratios)//2]
-    
+
     # Calculate standard deviation
     variance = sum((r - avg_ratio) ** 2 for r in ratios) / len(ratios)
     std_dev = variance ** 0.5
-    
+
     # Find most common ratio (mode approximation - bin to 0.01)
     ratio_bins = {}
     for ratio in ratios:
         bin_key = round(ratio * 100) / 100  # Round to 0.01
         ratio_bins[bin_key] = ratio_bins.get(bin_key, 0) + 1
-    
+
     mode_ratio = max(ratio_bins, key=ratio_bins.get)
     mode_count = ratio_bins[mode_ratio]
-    
+
     # RPM statistics
     min_crank_rpm = min(crank_rpms)
     max_crank_rpm = max(crank_rpms)
     avg_crank_rpm = sum(crank_rpms) / len(crank_rpms)
-    
+
     min_wheel_rpm = min(wheel_rpms)
     max_wheel_rpm = max(wheel_rpms)
     avg_wheel_rpm = sum(wheel_rpms) / len(wheel_rpms)
-    
+
     print("Statistics:")
     print("-" * 60)
     print(f"Total samples collected: {len(ratios)}")
@@ -280,7 +280,7 @@ else:
     print(f"Note: Samples where wheel was spinning but crank RPM < {min_crank_rpm_threshold}")
     print(f"      were ignored to filter out flywheel coasting effects.")
     print()
-    
+
     print("Gear Ratio Statistics:")
     print(f"  Minimum ratio: {min_ratio:.4f}")
     print(f"  Maximum ratio: {max_ratio:.4f}")
@@ -289,19 +289,19 @@ else:
     print(f"  Mode ratio:    {mode_ratio:.4f} (appears {mode_count} times)")
     print(f"  Std deviation: {std_dev:.4f}")
     print()
-    
+
     print("Crank RPM Statistics:")
     print(f"  Minimum: {min_crank_rpm} RPM")
     print(f"  Maximum: {max_crank_rpm} RPM")
     print(f"  Average: {avg_crank_rpm:.1f} RPM")
     print()
-    
+
     print("Wheel RPM Statistics:")
     print(f"  Minimum: {min_wheel_rpm} RPM")
     print(f"  Maximum: {max_wheel_rpm} RPM")
     print(f"  Average: {avg_wheel_rpm:.1f} RPM")
     print()
-    
+
     print("=" * 60)
     print("Recommended Gear Ratio")
     print("=" * 60)
@@ -315,7 +315,7 @@ else:
     print(f"Or use the mode (most common value):")
     print(f"  {mode_ratio:.4f} (mode)")
     print()
-    
+
     if std_dev < 0.01:
         print("✓ Low standard deviation - ratio is very consistent!")
     elif std_dev < 0.05:
@@ -327,7 +327,7 @@ else:
         print("  - Sensor alignment issues")
         print("  - Mechanical issues with the bike trainer")
     print()
-    
+
     # Show ratio distribution
     print("Ratio Distribution (rounded to 0.01):")
     print("-" * 60)
@@ -337,11 +337,11 @@ else:
         bar = "█" * bar_length
         percentage = (count / len(ratios)) * 100
         print(f"  {bin_ratio:5.2f}: {bar} {count:4d} ({percentage:5.1f}%)")
-    
+
     if len(sorted_bins) > 20:
         print(f"  ... and {len(sorted_bins) - 20} more bins")
     print()
-    
+
     print("=" * 60)
     print("Usage in Code")
     print("=" * 60)

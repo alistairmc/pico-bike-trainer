@@ -3,14 +3,14 @@ from machine import Pin
 
 class MotorSensor:
     """Motor sensor class for reading and counting motor RPM.
-    
+
     This class handles hall sensor-based motor RPM readings (1 pulse per full 360 rotation).
     Uses GPIO pins with interrupt handlers to count rotations when pins go high.
     """
-    
+
     def __init__(self, motor_count_gpio_pin=0, motor_stop_gpio_pin=1):
         """Initialize the motor sensor.
-        
+
         Args:
             motor_count_gpio_pin: GPIO pin number for the motor hall sensor (default: 0).
             motor_stop_gpio_pin: GPIO pin number for the motor stop trigger (default: 1).
@@ -22,28 +22,28 @@ class MotorSensor:
         self.motor_rotations_per_motor_crank = 1000  # 1000 motor rotations = 1 full motor crank rotation
         self.motor_crank_position = 0  # Motor crank position (0-1000, representing 0-360 degrees)
         self.motor_direction = 1  # 1 = forward (increment), -1 = reverse (decrement)
-        
+
         # Set up interrupt handler for motor pulse counting
         # Use both rising and falling edges for better resolution on fast pulses
         # Signal goes from 0V (low) to 3.3V (high), so we count on rising edge
         self.motor_rpm_pin.irq(trigger=Pin.IRQ_RISING, handler=self._motor_pulse_handler)
-        
+
         # Motor stop trigger on GPIO pin (goes HIGH when motor crank is at bottom position)
         self.motor_stop_pin = Pin(motor_stop_gpio_pin, Pin.IN, Pin.PULL_UP)
         self.motor_crank_pulse_count = 0  # Total pulse count for motor crank rotations
         # Set up interrupt handler for motor stop trigger (trigger on rising edge when pin goes HIGH)
         self.motor_stop_pin.irq(trigger=Pin.IRQ_RISING, handler=self._motor_crank_pulse_handler)
-    
+
     def _motor_pulse_handler(self, _pin):
         """Interrupt handler for motor RPM hall sensor pulses.
-        
+
         Optimized for fast pulses - minimal code in interrupt handler.
         Signal transitions from 0V (low) to 3.3V (high) for each rotation.
         Increments or decrements counters based on motor direction.
-        
+
         Simplified: Only use positions 0-500 (never negative).
         Motor can run in reverse, but position never goes below 0.
-        
+
         Args:
             _pin: The pin that triggered the interrupt (unused but required by MicroPython).
         """
@@ -54,7 +54,7 @@ class MotorSensor:
         # Position 0 = stop position (0% load)
         # Position 500 = 180 degrees forward (100% load)
         max_load_position = self.motor_rotations_per_motor_crank // 2  # 500
-        
+
         if self.motor_direction == 1:  # Forward
             # Forward: increment position, clamp to max (500)
             if self.motor_crank_position < max_load_position:
@@ -69,14 +69,14 @@ class MotorSensor:
             # Don't go below 0
             if self.motor_crank_position < 0:
                 self.motor_crank_position = 0
-    
+
     def _motor_crank_pulse_handler(self, _pin):
         """Interrupt handler for motor crank rotation sensor pulses.
-        
+
         Optimized for fast pulses - minimal code in interrupt handler.
         Signal transitions from 0V (low) to 3.3V (high) when motor crank is at bottom of rotation.
         Resets motor count since last motor crank pulse.
-        
+
         Args:
             _pin: The pin that triggered the interrupt (unused but required by MicroPython).
         """
@@ -85,92 +85,92 @@ class MotorSensor:
         self.motor_crank_pulse_count += 1
         # Reset motor crank position (motor crank is at bottom, 0 degrees)
         self.motor_crank_position = 0
-    
+
     def get_pulse_count(self):
         """Get the current motor pulse count.
-        
+
         Returns:
             Total number of pulses detected (1 pulse per full 360 rotation).
         """
         return self.motor_pulse_count
-    
+
     def get_motor_crank_count(self):
         """Get the current motor crank rotation count.
-        
+
         Returns:
             Total number of motor crank rotations detected (1 pulse per full 360 rotation).
         """
         return self.motor_crank_pulse_count
-    
+
     def reset_count(self):
         """Reset the motor pulse count to zero."""
         self.motor_pulse_count = 0
-    
+
     def reset_motor_crank_count(self):
         """Reset the motor crank pulse count to zero."""
         self.motor_crank_pulse_count = 0
 
     def get_motor_crank_position(self):
         """Get the current motor crank position in degrees (0-180 for load).
-        
+
         Simplified: Only uses positions 0-500 (never negative).
         Position 0 = 0 degrees (bottom position, least resistance, stop position)
         Position 500 = 180 degrees (top position, most resistance, 100% load)
-        
+
         Returns:
             Motor crank position in degrees (0-180), where 0 = bottom, 180 = top.
         """
         # Position is always 0-500 (never negative)
         position = self.motor_crank_position
         max_load_position = self.motor_rotations_per_motor_crank // 2  # 500
-        
+
         # Clamp to valid range (safety check)
         if position > max_load_position:
             position = max_load_position
         if position < 0:
             position = 0
-        
+
         position_degrees = (position / max_load_position) * 180.0
         return position_degrees
-    
+
     def get_motor_crank_position_percent(self):
         """Get the current motor crank position as a percentage of full rotation.
-        
+
         Simplified: Only uses positions 0-500 (never negative).
-        
+
         Returns:
             Motor crank position as percentage (0.0-100.0), where 0.0 = bottom, 100.0 = top.
         """
         # Position is always 0-500 (never negative)
         position = self.motor_crank_position
         max_load_position = self.motor_rotations_per_motor_crank // 2  # 500
-        
+
         # Clamp to valid range (safety check)
         if position > max_load_position:
             position = max_load_position
         if position < 0:
             position = 0
-        
+
         # Calculate as percentage of 180 degrees (0-100% load range)
         return (position / max_load_position) * 100.0
-    
+
     def is_motor_crank_at_bottom(self):
         """Check if the motor crank is currently at its lowest position (bottom).
-        
+
         Reads the motor stop trigger pin state. The pin is HIGH when motor crank is at bottom.
         This can be used to validate or reset the position tracking.
-        
+
         Returns:
             True if motor stop pin is HIGH (motor crank at bottom), False otherwise.
         """
         return self.motor_stop_pin.value() == 1
-    
+
     def sync_position_to_sensor(self):
         """Synchronize position tracking with the motor stop sensor.
-        
+
         If the motor stop sensor indicates the motor crank is at bottom, reset the motor count
         since last motor crank pulse to ensure accurate position tracking.
-        
+
         Returns:
             True if position was synced (motor crank was at bottom), False otherwise.
         """
@@ -178,23 +178,23 @@ class MotorSensor:
             self.motor_crank_position = 0
             return True
         return False
-    
+
     def disable_stop_interrupt(self):
         """Disable the motor stop trigger interrupt handler.
-        
+
         Useful during calibration to avoid false positives from interrupt noise.
         """
         self.motor_stop_pin.irq(handler=None)
-    
+
     def enable_stop_interrupt(self):
         """Re-enable the motor stop trigger interrupt handler."""
         self.motor_stop_pin.irq(trigger=Pin.IRQ_RISING, handler=self._motor_crank_pulse_handler)
-    
+
     def set_motor_direction_forward(self):
         """Set motor direction to forward (counts increment)."""
         self.motor_direction = 1
-    
+
     def set_motor_direction_reverse(self):
         """Set motor direction to reverse (counts decrement)."""
         self.motor_direction = -1
-    
+

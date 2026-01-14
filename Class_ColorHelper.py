@@ -1,19 +1,19 @@
 class ColorHelper:
     """Helper class for color conversion utilities.
-    
+
     Provides methods to convert RGB color values to display-compatible
     color formats for LCD displays using RGB565 format.
     """
-    
+
     @staticmethod
     def rgb_color(R, G, B):
         """Convert RGB values (0-255) to RGB565 format for display.
-        
+
         Args:
             R: Red component (0-255).
             G: Green component (0-255).
             B: Blue component (0-255).
-        
+
         Returns:
             Color value in RGB565 format.
         """

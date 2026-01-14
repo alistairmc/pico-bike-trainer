@@ -61,19 +61,19 @@ monitor_duration = 10000  # 10 seconds
 while utime.ticks_diff(utime.ticks_ms(), start_time) < monitor_duration:
     current_state_crank = crank_sensor.hall_sensor.value()
     current_state_wheel = wheel_speed_sensor.hall_sensor.value()
-    
+
     if current_state_crank != last_state_crank:
         pin_changes_crank += 1
         last_state_crank = current_state_crank
         elapsed = utime.ticks_diff(utime.ticks_ms(), start_time)
         print(f"  GPIO 7 (Crank) changed to: {current_state_crank} (at {elapsed}ms)")
-    
+
     if current_state_wheel != last_state_wheel:
         pin_changes_wheel += 1
         last_state_wheel = current_state_wheel
         elapsed = utime.ticks_diff(utime.ticks_ms(), start_time)
         print(f"  GPIO 4 (Wheel) changed to: {current_state_wheel} (at {elapsed}ms)")
-    
+
     utime.sleep_ms(10)
 
 print()
@@ -104,30 +104,30 @@ rpm_readings_wheel = []
 
 while utime.ticks_diff(utime.ticks_ms(), start_time) < monitor_duration:
     elapsed = utime.ticks_diff(utime.ticks_ms(), start_time)
-    
+
     if utime.ticks_diff(utime.ticks_ms(), last_update_time) >= update_interval:
         crank_rpm = crank_sensor.get_rpm()
         wheel_rpm = wheel_speed_sensor.get_rpm()
-        
+
         if crank_rpm > 0:
             rpm_readings_crank.append(crank_rpm)
             if crank_rpm > max_crank_rpm:
                 max_crank_rpm = crank_rpm
             if crank_rpm < min_crank_rpm:
                 min_crank_rpm = crank_rpm
-        
+
         if wheel_rpm > 0:
             rpm_readings_wheel.append(wheel_rpm)
             if wheel_rpm > max_wheel_rpm:
                 max_wheel_rpm = wheel_rpm
             if wheel_rpm < min_wheel_rpm:
                 min_wheel_rpm = wheel_rpm
-        
+
         elapsed_sec = elapsed // 1000
         print(f"  [{elapsed_sec:3d}s] Crank RPM: {crank_rpm:4d}  |  Wheel RPM: {wheel_rpm:4d}")
-        
+
         last_update_time = utime.ticks_ms()
-    
+
     utime.sleep_ms(100)
 
 print()
@@ -155,16 +155,16 @@ print()
 for gear_num in range(1, gear_selector.num_gears + 1):
     gear_selector.current_gear = gear_num
     gear_ratio = gear_selector.get_current_ratio()
-    
+
     # Wait a moment for RPM to stabilize
     utime.sleep_ms(2000)
-    
+
     # Get current readings
     crank_rpm = crank_sensor.get_rpm()
     wheel_rpm = wheel_speed_sensor.get_rpm()
     calculated_speed = speed_controller.get_calculated_speed()
     unit_label = speed_controller.unit
-    
+
     print(f"Gear {gear_num} (Ratio: {gear_ratio:.2f}):")
     print(f"  Crank RPM: {crank_rpm}")
     print(f"  Wheel RPM: {wheel_rpm}")
@@ -189,15 +189,15 @@ print("-" * 60)
 
 while utime.ticks_diff(utime.ticks_ms(), start_time) < monitor_duration:
     elapsed = utime.ticks_diff(utime.ticks_ms(), start_time)
-    
+
     if utime.ticks_diff(utime.ticks_ms(), last_update_time) >= update_interval:
         crank_rpm = crank_sensor.get_rpm()
         wheel_rpm = wheel_speed_sensor.get_rpm()
         current_gear = gear_selector.current_gear
-        
+
         # Get speed in current unit
         calculated_speed = speed_controller.get_calculated_speed()
-        
+
         # Also get speed in both units for display
         original_unit = speed_controller.unit
         speed_controller.unit = 'kmph'
@@ -205,12 +205,12 @@ while utime.ticks_diff(utime.ticks_ms(), start_time) < monitor_duration:
         speed_controller.unit = 'mph'
         speed_mph = speed_controller.get_calculated_speed()
         speed_controller.unit = original_unit  # Restore original unit
-        
+
         elapsed_sec = elapsed // 1000
         print(f"{elapsed_sec:4d}s  {current_gear:3d}   {crank_rpm:4d}   {wheel_rpm:4d}   {speed_kmph:10.1f}      {speed_mph:10.1f}")
-        
+
         last_update_time = utime.ticks_ms()
-    
+
     utime.sleep_ms(100)
 
 print()

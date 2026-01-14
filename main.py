@@ -14,6 +14,14 @@ from Class_View import View
 from Class_ButtonController import ButtonController
 from Class_TimerController import TimerController
 
+# BLE support (optional - requires Pico W)
+try:
+    from Class_BLEController import BLEController
+    BLE_AVAILABLE = True
+except ImportError:
+    BLE_AVAILABLE = False
+    print("Note: BLE not available (requires Pico W or ubluetooth module)")
+
 # =========== Configuration Constants ===========
 # Motor configuration
 MOTOR_COUNT_GPIO_PIN = 0
@@ -45,6 +53,10 @@ DISPLAY_UPDATE_INTERVAL_MS = 250  # Update 4 times per second
 MAIN_LOOP_SLEEP_US = 200  # Small delay to prevent tight loop
 CALIBRATION_DELAY_SEC = 3  # Wait before starting calibration
 
+# BLE configuration
+BLE_ENABLED = True  # Set to False to disable BLE (requires Pico W)
+BLE_UPDATE_INTERVAL_MS = 1000  # Update BLE data every second
+
 # Error handling configuration
 ERROR_RETRY_DELAY_MS = 1000  # Delay after error before retry
 MAX_CONSECUTIVE_ERRORS = 10  # Maximum consecutive errors before giving up
@@ -62,19 +74,19 @@ try:
         lcd=LCD,
         rgb_color_func=ColorHelper.rgb_color
     )
-    
+
     # Wait before starting calibration
     utime.sleep(CALIBRATION_DELAY_SEC)
-    
+
     # Perform startup calibration: move to bottom position, then to top position (180 degrees)
     load_controller.startup_calibration()
-    
+
     # Crank sensor (measures pedal/crank speed - returns RPM only)
     crank_sensor = CrankSensor(gpio_pin=CRANK_SENSOR_GPIO)
-    
+
     # Wheel speed sensor (measures flywheel/wheel speed directly - returns RPM only)
     wheel_speed_sensor = WheelSpeedSensor(gpio_pin=WHEEL_SPEED_SENSOR_GPIO)
-    
+
     # Speed controller (manages all speed calculations - always displays mph)
     speed_controller = SpeedController(
         crank_sensor=crank_sensor,
@@ -85,10 +97,26 @@ try:
     )
     speed_controller.set_wheel_circumference(WHEEL_CIRCUMFERENCE_M)
     speed_controller.set_calibration_from_wheel_rpm(CALIBRATION_SPEED_KMH, CALIBRATION_WHEEL_RPM)
-    
+
     # Initialize timer controller (manages timer functionality - MVC pattern)
     timer_controller = TimerController()
-    
+
+    # Initialize BLE controller (optional - requires Pico W)
+    ble_controller = None
+    if BLE_AVAILABLE and BLE_ENABLED:
+        try:
+            ble_controller = BLEController(
+                name="Pico Bike Trainer",
+                speed_controller=speed_controller,
+                load_controller=load_controller
+            )
+            ble_controller.set_wheel_circumference(int(WHEEL_CIRCUMFERENCE_M * 1000))  # Convert to mm
+            print("BLE controller initialized")
+        except Exception as e:
+            print(f"Warning: Failed to initialize BLE: {e}")
+            print("Continuing without BLE support...")
+            ble_controller = None
+
     # Initialize view (handles all display logic - MVC pattern)
     back_col = 0
     view = View(
@@ -97,27 +125,29 @@ try:
         gear_selector=gear_selector,
         load_controller=load_controller,
         timer_controller=timer_controller,
+        ble_controller=ble_controller,
         screen_width=LCD.width,
         screen_height=LCD.height
     )
-    
+
     # Initialize button controller (handles all button inputs - MVC pattern)
     button_controller = ButtonController(
         speed_controller=speed_controller,
         load_controller=load_controller,
         gear_selector=gear_selector,
         timer_controller=timer_controller,
+        ble_controller=ble_controller,
         view=view,
         incline_step=INCLINE_STEP,
         max_incline=MAX_INCLINE,
         min_incline=MIN_INCLINE
     )
-    
+
     # Screen brightness
     pwm = PWM(Pin(LCD.BL))
     pwm.freq(1000)
     pwm.duty_u16(65535)  # Full brightness
-    
+
     # Initialize display
     LCD.fill(ColorHelper.rgb_color(0, 0, 0))
     load_controller.apply_load()
@@ -139,32 +169,43 @@ except Exception as e:
 
 # =========== Main Loop ===========
 last_display_update_time = utime.ticks_ms()
+last_ble_update_time = utime.ticks_ms()
 consecutive_errors = 0
 
 while True:
     try:
         current_time = utime.ticks_ms()
-        
+
         # Check all buttons and handle actions
         button_controller.check_buttons()
-        
+
         # Continuously update load to adjust motor position towards target
         load_controller.apply_load()
-        
+
+        # Update BLE data if enabled
+        if ble_controller is not None:
+            # Update pairing mode (check for timeout)
+            ble_controller.update_pairing_mode(current_time)
+
+            if utime.ticks_diff(current_time, last_ble_update_time) >= BLE_UPDATE_INTERVAL_MS:
+                ble_controller.update_combined_data()
+                ble_controller.update_incline_value()
+                last_ble_update_time = current_time
+
         # Update display at configured interval
         if utime.ticks_diff(current_time, last_display_update_time) >= DISPLAY_UPDATE_INTERVAL_MS:
             view.render_all()
             last_display_update_time = current_time
-        
+
         # Reset error counter on successful iteration
         consecutive_errors = 0
-        
+
         utime.sleep_us(MAIN_LOOP_SLEEP_US)
-        
+
     except Exception as e:
         consecutive_errors += 1
         print(f"Error in main loop (count: {consecutive_errors}): {e}")
-        
+
         # If too many consecutive errors, try to show error and halt
         if consecutive_errors >= MAX_CONSECUTIVE_ERRORS:
             print("Too many consecutive errors - halting")
@@ -178,7 +219,7 @@ while True:
             # Halt execution
             while True:
                 utime.sleep_ms(1000)
-        
+
         # Wait before retrying
         utime.sleep_ms(ERROR_RETRY_DELAY_MS)
 

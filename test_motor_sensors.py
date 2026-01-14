@@ -54,17 +54,17 @@ monitor_duration = 5000  # 5 seconds
 while utime.ticks_diff(utime.ticks_ms(), start_time) < monitor_duration:
     current_state_0 = motor_sensor.motor_rpm_pin.value()
     current_state_1 = motor_sensor.motor_stop_pin.value()
-    
+
     if current_state_0 != last_state_0:
         pin_changes_0 += 1
         last_state_0 = current_state_0
         print(f"GPIO 0 changed to: {current_state_0} (at {utime.ticks_diff(utime.ticks_ms(), start_time)}ms)")
-    
+
     if current_state_1 != last_state_1:
         pin_changes_1 += 1
         last_state_1 = current_state_1
         print(f"GPIO 1 changed to: {current_state_1} (at {utime.ticks_diff(utime.ticks_ms(), start_time)}ms)")
-    
+
     utime.sleep_ms(10)
 
 print()
@@ -161,13 +161,13 @@ while utime.ticks_diff(utime.ticks_ms(), start_time) < timeout:
     elapsed = utime.ticks_diff(utime.ticks_ms(), start_time)
     current_pulses = motor_sensor.motor_pulse_count
     pulse_diff = current_pulses - initial_pulse_count
-    
+
     # Print progress every 5 seconds
     if utime.ticks_diff(utime.ticks_ms(), last_status_time) >= status_interval:
         elapsed_sec = elapsed // 1000
         elapsed_min = elapsed_sec // 60
         elapsed_sec_remainder = elapsed_sec % 60
-        
+
         # Calculate pulse rate (rotations per second)
         if pulse_diff > last_pulse_count:
             time_since_last = utime.ticks_diff(utime.ticks_ms(), last_pulse_time)
@@ -177,7 +177,7 @@ while utime.ticks_diff(utime.ticks_ms(), start_time) < timeout:
                 pulse_rate = 0
         else:
             pulse_rate = 0
-        
+
         # Estimate remaining rotations and time
         remaining_rotations = max_rotations_needed - pulse_diff
         if pulse_rate > 0 and remaining_rotations > 0:
@@ -187,14 +187,14 @@ while utime.ticks_diff(utime.ticks_ms(), start_time) < timeout:
             time_estimate = f"~{est_min_remaining}m {est_sec_remaining}s remaining"
         else:
             time_estimate = "calculating..."
-        
+
         print(f"  Progress: {elapsed_min}m {elapsed_sec_remainder}s elapsed, "
               f"{pulse_diff}/1000 rotations, {time_estimate}")
-        
+
         last_status_time = utime.ticks_ms()
         last_pulse_count = pulse_diff
         last_pulse_time = utime.ticks_ms()
-    
+
     if motor_sensor.motor_stop_pin.value() == 1:
         elapsed = utime.ticks_diff(utime.ticks_ms(), start_time)
         elapsed_sec = elapsed // 1000

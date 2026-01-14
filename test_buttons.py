@@ -67,49 +67,49 @@ status_interval_ms = 1000  # Print status every second
 try:
     while utime.ticks_diff(utime.ticks_ms(), start_time) < test_duration_ms:
         current_time = utime.ticks_ms()
-        
+
         # Check each button
         for pin_num, button in buttons.items():
             current_state = button['pin'].value()
             prev_state = button['prev_state']
-            
+
             # Detect button press (transition from 1 to 0)
             if prev_state == 1 and current_state == 0:
                 button['press_count'] += 1
                 button['last_press_time'] = current_time
                 elapsed = utime.ticks_diff(current_time, start_time) / 1000
                 print(f"[{elapsed:6.1f}s] GPIO {pin_num:2d} ({button['name']:20s}): PRESSED")
-            
+
             # Detect button release (transition from 0 to 1)
             elif prev_state == 0 and current_state == 1:
                 button['release_count'] += 1
                 button['last_release_time'] = current_time
                 elapsed = utime.ticks_diff(current_time, start_time) / 1000
-                
+
                 # Calculate hold duration
                 if button['last_press_time'] > 0:
                     hold_duration = utime.ticks_diff(current_time, button['last_press_time'])
                     hold_sec = hold_duration / 1000
-                    
+
                     if hold_sec >= 3.0:
                         print(f"[{elapsed:6.1f}s] GPIO {pin_num:2d} ({button['name']:20s}): RELEASED (LONG PRESS: {hold_sec:.1f}s)")
                     else:
                         print(f"[{elapsed:6.1f}s] GPIO {pin_num:2d} ({button['name']:20s}): RELEASED (hold: {hold_sec:.2f}s)")
-            
+
             button['prev_state'] = current_state
-        
+
         # Print status every second
         if utime.ticks_diff(current_time, last_status_time) >= status_interval_ms:
             elapsed = utime.ticks_diff(current_time, start_time) / 1000
             remaining = (test_duration_ms / 1000) - elapsed
             print(f"[Status] Test running... {remaining:.0f}s remaining", end='\r')
             last_status_time = current_time
-        
+
         utime.sleep_ms(10)  # Small delay to avoid tight loop
-    
+
     print()  # New line after status updates
     print()
-    
+
 except KeyboardInterrupt:
     print()
     print("Test interrupted by user")
@@ -125,7 +125,7 @@ for pin_num, button in sorted(buttons.items()):
     name = button['name']
     presses = button['press_count']
     releases = button['release_count']
-    
+
     # Check if button is currently pressed
     current_state = button['pin'].value()
     if current_state == 0:
@@ -136,7 +136,7 @@ for pin_num, button in sorted(buttons.items()):
         status = "OK"
     else:
         status = f"MISMATCH (presses != releases)"
-    
+
     print(f"{name:<25} {presses:<10} {releases:<10} {status}")
 
 print()
@@ -155,19 +155,19 @@ try:
     while True:
         current_time = utime.ticks_ms()
         elapsed = utime.ticks_diff(current_time, start_time) / 1000
-        
+
         for pin_num, button in sorted(buttons.items()):
             current_state = button['pin'].value()
             prev_state = button['prev_state']
-            
+
             if current_state != prev_state:
                 state_str = "PRESSED" if current_state == 0 else "RELEASED"
                 change_str = "PRESS" if current_state == 0 else "RELEASE"
                 print(f"{elapsed:7.2f}s  {pin_num:<6} {button['name']:<20} {state_str:<10} {change_str}")
                 button['prev_state'] = current_state
-        
+
         utime.sleep_ms(50)  # Check every 50ms
-        
+
 except KeyboardInterrupt:
     print()
     print("Test complete!")
@@ -184,7 +184,7 @@ for pin_num, button in sorted(buttons.items()):
     presses = button['press_count']
     releases = button['release_count']
     current_state = button['pin'].value()
-    
+
     if presses == 0 and releases == 0:
         print(f"⚠️  GPIO {pin_num:2d} ({button['name']:20s}): NO ACTIVITY DETECTED")
         print(f"   - Check wiring and connections")

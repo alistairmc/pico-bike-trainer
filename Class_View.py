@@ -5,9 +5,9 @@ class View:
     from business logic. Controllers and sensors provide data, View renders it.
     """
 
-    def __init__(self, lcd, rgb_color_func, back_col, speed_controller=None, 
+    def __init__(self, lcd, rgb_color_func, back_col, speed_controller=None,
                  gear_selector=None, load_controller=None, timer_controller=None,
-                 screen_width=240, screen_height=240):
+                 ble_controller=None, screen_width=240, screen_height=240):
         """Initialize the view.
 
         Args:
@@ -18,6 +18,7 @@ class View:
             gear_selector: GearSelector instance (default: None).
             load_controller: LoadController instance (default: None).
             timer_controller: TimerController instance for timer display (default: None).
+            ble_controller: BLEController instance for pairing status display (default: None).
             screen_width: Width of the display screen in pixels (default: 240).
             screen_height: Height of the display screen in pixels (default: 240).
         """
@@ -28,6 +29,7 @@ class View:
         self.gear_selector = gear_selector
         self.load_controller = load_controller
         self.timer_controller = timer_controller
+        self.ble_controller = ble_controller
         self.screen_width = screen_width
         self.screen_height = screen_height
 
@@ -55,12 +57,24 @@ class View:
                     except:
                         pass
 
-            # Render timer
-            if self.timer_controller is not None:
+            # Render pairing status (if in pairing mode, show prominently)
+            if self.ble_controller is not None:
                 try:
-                    self._render_timer()
+                    if self.ble_controller.is_pairing_mode():
+                        self._render_pairing_status()
+                    else:
+                        # Render timer only when not in pairing mode
+                        if self.timer_controller is not None:
+                            self._render_timer()
                 except Exception as e:
-                    print(f"Error rendering timer: {e}")
+                    print(f"Error rendering pairing status: {e}")
+            else:
+                # Render timer if no BLE controller
+                if self.timer_controller is not None:
+                    try:
+                        self._render_timer()
+                    except Exception as e:
+                        print(f"Error rendering timer: {e}")
 
             # Render gear selector
             if self.gear_selector is not None:
@@ -90,7 +104,7 @@ class View:
 
         # Get calculated speed (wheel RPM * gear ratio)
         calculated_speed = self.speed_controller.get_calculated_speed()
-        wheel_rpm = self.speed_controller.get_wheel_rpm()
+        # wheel_rpm = self.speed_controller.get_wheel_rpm()  # Not currently used (commented out display)
 
         # Unit label (always mph)
         unit_label = "mph"
@@ -181,27 +195,27 @@ class View:
         """Render timer display."""
         if self.timer_controller is None:
             return
-        
+
         import utime
         current_time = utime.ticks_ms()
         elapsed_ms = self.timer_controller.get_elapsed_ms(current_time)
-        
+
         # Format timer as MM:SS
         total_seconds = elapsed_ms // 1000
         minutes = total_seconds // 60
         seconds = total_seconds % 60
         timer_text = f"{minutes:02d}:{seconds:02d}"
-        
+
         # Display timer label and value
         try:
             timer_label = "Time:"
             timer_label_size = 2
             timer_value_size = 2
-            
+
             char_width_base = 8
             label_char_width = char_width_base * timer_label_size
             value_char_width = char_width_base * timer_value_size
-            
+
             # Position timer just above gear display
             # Gear display is at bottom (screen_height - 20)
             # Timer should be above it with a small gap
@@ -209,20 +223,20 @@ class View:
             timer_text_height = timer_value_size * 8  # Size 2 = 16 pixels tall
             gap = 6  # Gap between timer and gear display
             timer_y = gear_display_y - timer_text_height - gap
-            
+
             # Calculate total width needed
             label_width = len(timer_label) * label_char_width
             value_width = len(timer_text) * value_char_width
             total_width = label_width + 4 + value_width  # 4px gap between label and value
-            
+
             # Center the timer horizontally (like gear display)
             label_x = (self.screen_width - total_width) // 2
             label_y = timer_y
-            
+
             # Calculate timer value position (next to label)
             timer_value_x = label_x + label_width + 4  # Small gap after label
             timer_value_y = label_y
-            
+
             timer_color = self.rgb_color_func(200, 200, 200)
             if timer_color is not None:
                 # Display label
@@ -231,7 +245,138 @@ class View:
                 self.lcd.write_text(timer_text, int(timer_value_x), timer_value_y, timer_value_size, int(timer_color))
         except (TypeError, ValueError, AttributeError) as e:
             print(f"Error rendering timer: {e}")
-    
+
+    def _render_pairing_status(self):
+        """Render BLE pairing status display."""
+        if self.ble_controller is None:
+            return
+
+        if self.rgb_color_func is None:
+            return  # Cannot render without color function
+
+        import utime
+
+        try:
+            # Calculate remaining time
+            current_time = utime.ticks_ms()
+            pairing_start = self.ble_controller.get_pairing_mode_start_time()
+            pairing_duration = self.ble_controller.get_pairing_mode_duration_ms()
+
+            # Validate pairing_start before using it
+            if pairing_start is None or pairing_start == 0:
+                print("Warning: pairing_start is invalid, using current time")
+                pairing_start = current_time
+
+            elapsed = utime.ticks_diff(current_time, pairing_start)
+            if elapsed is None:
+                print("Warning: elapsed time calculation failed")
+                elapsed = 0
+
+            remaining_ms = max(0, pairing_duration - elapsed)
+            remaining_sec = remaining_ms // 1000
+
+            # Display pairing status prominently
+            title = "BLE PAIRING"
+            status_text = f"Time: {remaining_sec:3d}s"
+
+            # Default white color in RGB565 format (0xFFFF = white)
+            DEFAULT_WHITE = 0xFFFF
+
+            # Check if connected
+            if self.ble_controller.is_connected():
+                status_text = "CONNECTED!"
+                try:
+                    status_color = self.rgb_color_func(0, 255, 0)  # Green
+                    if status_color is None:
+                        status_color = DEFAULT_WHITE
+                except Exception:
+                    status_color = DEFAULT_WHITE
+            else:
+                try:
+                    status_color = self.rgb_color_func(255, 200, 0)  # Yellow/Orange
+                    if status_color is None:
+                        status_color = DEFAULT_WHITE
+                except Exception:
+                    status_color = DEFAULT_WHITE
+
+            try:
+                title_color = self.rgb_color_func(255, 255, 255)  # White
+                if title_color is None:
+                    title_color = DEFAULT_WHITE
+            except Exception:
+                title_color = DEFAULT_WHITE
+
+            # Calculate positions (centered)
+            char_width_base = 8
+            title_size = 3
+            status_size = 2
+
+            title_char_width = char_width_base * title_size
+            status_char_width = char_width_base * status_size
+
+            title_width = len(title) * title_char_width
+            status_width = len(status_text) * status_char_width
+
+            title_x = (self.screen_width - title_width) // 2
+            title_y = 60  # Below speed display
+
+            status_x = (self.screen_width - status_width) // 2
+            status_y = title_y + (title_size * 8) + 10  # Below title
+
+            # Draw title - use default white if color is None
+            try:
+                color_value = int(title_color) if title_color is not None else DEFAULT_WHITE
+                self.lcd.write_text(title, title_x, title_y, title_size, color_value)
+            except (TypeError, ValueError, AttributeError) as e:
+                print(f"Error rendering pairing title: {e}")
+                # Fallback to default white
+                try:
+                    self.lcd.write_text(title, title_x, title_y, title_size, DEFAULT_WHITE)
+                except:
+                    pass
+
+            # Draw status - use default white if color is None
+            try:
+                color_value = int(status_color) if status_color is not None else DEFAULT_WHITE
+                self.lcd.write_text(status_text, status_x, status_y, status_size, color_value)
+            except (TypeError, ValueError, AttributeError) as e:
+                print(f"Error rendering pairing status: {e}")
+                # Fallback to default white
+                try:
+                    self.lcd.write_text(status_text, status_x, status_y, status_size, DEFAULT_WHITE)
+                except:
+                    pass
+
+            # Draw connection status
+            if not self.ble_controller.is_connected():
+                instruction = "Waiting..."
+                inst_size = 2
+                inst_char_width = char_width_base * inst_size
+                inst_width = len(instruction) * inst_char_width
+                inst_x = (self.screen_width - inst_width) // 2
+                inst_y = status_y + (status_size * 8) + 8
+
+                try:
+                    inst_color = self.rgb_color_func(200, 200, 200)
+                    if inst_color is None:
+                        inst_color = DEFAULT_WHITE
+                except Exception:
+                    inst_color = DEFAULT_WHITE
+
+                try:
+                    color_value = int(inst_color) if inst_color is not None else DEFAULT_WHITE
+                    self.lcd.write_text(instruction, inst_x, inst_y, inst_size, color_value)
+                except (TypeError, ValueError, AttributeError) as e:
+                    print(f"Error rendering pairing instruction: {e}")
+                    # Fallback to default white
+                    try:
+                        self.lcd.write_text(instruction, inst_x, inst_y, inst_size, DEFAULT_WHITE)
+                    except:
+                        pass
+
+        except (TypeError, ValueError, AttributeError) as e:
+            print(f"Error rendering pairing status: {e}")
+
     def _render_gear_selector(self):
         """Render gear selector display."""
         if self.gear_selector is None:
@@ -243,26 +388,26 @@ class View:
         start_x = (self.screen_width - self.gear_selector.total_width) // 2
 
         # Clear the gear display area
-        self.lcd.fill_rect(0, display_y - 2, 
+        self.lcd.fill_rect(0, display_y - 2,
                           self.screen_width, self.gear_selector.gear_box_height + 4, self.back_col)
 
         # Display each gear
         for gear_num in range(1, self.gear_selector.num_gears + 1):
-            x_pos = start_x + ((gear_num - 1) * 
+            x_pos = start_x + ((gear_num - 1) *
                               (self.gear_selector.gear_box_width + self.gear_selector.gear_spacing))
 
             if gear_num == self.gear_selector.current_gear:
                 # Selected gear: white box with inverted text (black text)
                 # Draw white box
-                self.lcd.fill_rect(x_pos, display_y, 
-                                  self.gear_selector.gear_box_width, self.gear_selector.gear_box_height, 
+                self.lcd.fill_rect(x_pos, display_y,
+                                  self.gear_selector.gear_box_width, self.gear_selector.gear_box_height,
                                   self.rgb_color_func(255, 255, 255))
                 # Draw gear number in black (inverted)
                 gear_str = str(gear_num)
                 # Center the text in the box (size 2 = 8*2 = 16 pixels per character)
                 text_width = 16 * len(gear_str)
                 text_x = x_pos + (self.gear_selector.gear_box_width - text_width) // 2
-                self.lcd.write_text(gear_str, text_x, display_y + 6, 2, 
+                self.lcd.write_text(gear_str, text_x, display_y + 6, 2,
                                    self.rgb_color_func(0, 0, 0))
             else:
                 # Unselected gear: normal text on background
@@ -270,7 +415,7 @@ class View:
                 # Center the text in the box (size 2 = 8*2 = 16 pixels per character)
                 text_width = 16 * len(gear_str)
                 text_x = x_pos + (self.gear_selector.gear_box_width - text_width) // 2
-                self.lcd.write_text(gear_str, text_x, display_y + 6, 2, 
+                self.lcd.write_text(gear_str, text_x, display_y + 6, 2,
                                    self.rgb_color_func(255, 255, 255))
 
     def display_calibration_status(self, status_text, detail_text=None):

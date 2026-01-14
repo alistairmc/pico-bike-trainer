@@ -3,14 +3,14 @@ import framebuf
 
 class LCD1Inch3(framebuf.FrameBuffer):
     """Driver class for 1.3 inch LCD display with 240x240 resolution.
-    
+
     This class provides an interface to control a 1.3 inch LCD display
     using SPI communication. It extends framebuf.FrameBuffer to provide
     drawing capabilities with RGB565 color format.
     """
     def __init__(self):
         """Initialize the LCD display.
-        
+
         Sets up the display with 240x240 resolution, configures SPI
         communication, initializes the frame buffer, and sets up
         pre-defined color constants.
@@ -24,10 +24,10 @@ class LCD1Inch3(framebuf.FrameBuffer):
 
         self.width = 240
         self.height = 240
-        
+
         self.cs = Pin(self.CS,Pin.OUT)
         self.rst = Pin(self.RST,Pin.OUT)
-        
+
         self.cs(1)
         self.spi = SPI(1)
         self.spi = SPI(1,1000_000)
@@ -37,15 +37,15 @@ class LCD1Inch3(framebuf.FrameBuffer):
         self.buffer = bytearray(self.height * self.width * 2)
         super().__init__(self.buffer, self.width, self.height, framebuf.RGB565)
         self.init_display()
-        
+
         self.red   =   0x07E0 # Pre-defined colours
         self.green =   0x001f # Probably easier to use colour(r,g,b) defined below
         self.blue  =   0xf800
         self.white =   0xffff
-        
+
     def write_cmd(self, cmd):
         """Write a command byte to the display.
-        
+
         Args:
             cmd: Command byte to send to the display.
         """
@@ -53,11 +53,11 @@ class LCD1Inch3(framebuf.FrameBuffer):
         self.dc(0)
         self.cs(0)
         self.spi.write(bytearray([cmd]))
-        self.cs(1)  
+        self.cs(1)
 
     def write_data(self, buf):
         """Write a data byte to the display.
-        
+
         Args:
             buf: Data byte to send to the display.
         """
@@ -69,7 +69,7 @@ class LCD1Inch3(framebuf.FrameBuffer):
 
     def init_display(self):
         """Initialize the display with required configuration commands.
-        
+
         Performs hardware reset and sends initialization sequence
         of commands to configure the display settings including
         orientation, color format, and display parameters.
@@ -140,7 +140,7 @@ class LCD1Inch3(framebuf.FrameBuffer):
 
     def show(self):
         """Update the display with the current frame buffer contents.
-        
+
         Sends the frame buffer data to the display via SPI,
         updating the visible screen with any drawing operations
         that have been performed.
@@ -162,10 +162,10 @@ class LCD1Inch3(framebuf.FrameBuffer):
         self.spi.write(self.buffer)
         self.cs(1)
 
-    # def taken from https://github.com/dhargopala/pico-custom-font/blob/main/lcd_lib.py    
+    # def taken from https://github.com/dhargopala/pico-custom-font/blob/main/lcd_lib.py
     def write_text(self,text,x,y,size,color):
         """Write text on OLED/LCD display with variable font size.
-        
+
         Args:
             text: The string of characters to be displayed.
             x: X coordinate of starting position.
@@ -175,7 +175,7 @@ class LCD1Inch3(framebuf.FrameBuffer):
         """
         background = self.pixel(x,y)
         info = []
-        
+
         # Creating reference charaters to read their values
         self.text(text,x,y,color)
         for i in range(x,x+(8*len(text))):
@@ -183,13 +183,14 @@ class LCD1Inch3(framebuf.FrameBuffer):
                 # Fetching amd saving details of pixels, such as
                 # x co-ordinate, y co-ordinate, and color of the pixel
                 px_color = self.pixel(i,j)
-                info.append((i,j,px_color)) if px_color == color else None
-                
+                if px_color == color:
+                    info.append((i, j, px_color))
+
         # Clearing the reference characters from the screen
         self.text(text,x,y,background)
-        
+
         # Writing the custom-sized font characters on screen
         for px_info in info:
             self.fill_rect(size*px_info[0] - (size-1)*x , size*px_info[1] - (size-1)*y, size, size, px_info[2])
-              
+
 # ========= End of Driver ===========
