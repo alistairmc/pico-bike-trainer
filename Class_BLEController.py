@@ -331,7 +331,9 @@ class BLEController:
     def _set_feature_values(self):
         """Set FTMS and CSCS feature characteristic values."""
         # FTMS Feature: 8 bytes (4 bytes machine features + 4 bytes target features)
+        # Note: _FF_AVG_SPEED (bit 0) indicates speed is supported - some apps require this
         machine_features = (
+            _FF_AVG_SPEED |
             _FF_CADENCE |
             _FF_INCLINATION |
             _FF_RESISTANCE_LEVEL |
@@ -467,14 +469,24 @@ class BLEController:
                 # CW (uint8, kg/m * 100)
                 self.sim_cw = value[6]
                 
-                # Apply grade as incline
+                # Apply grade as incline with scaling
+                # FTMS grade is typically -20% to +20% (realistic road grades)
+                # LoadController expects -100 to +100 for full resistance range
+                # Scale by 5x so a 10% grade feels appropriately hard:
+                #   0% grade → 0% incline (baseline resistance)
+                #   10% grade → 50% incline (hard climb)
+                #   20% grade → 100% incline (max resistance)
+                #   -10% grade → -50% incline (easier descent)
                 grade_pct = self.sim_grade / 100.0
-                self.target_incline = grade_pct
+                scaled_incline = grade_pct * 5.0  # Scale factor: 5x
+                scaled_incline = max(-100.0, min(100.0, scaled_incline))  # Clamp to valid range
+                
+                self.target_incline = scaled_incline
                 if self.load_controller:
-                    self.load_controller.set_incline(grade_pct)
+                    self.load_controller.set_incline(scaled_incline)
                 
                 self._notify_status(_STATUS_INDOOR_BIKE_SIM_CHANGED, value[1:7])
-                print(f"BLE: Sim params - grade={grade_pct:.2f}%")
+                print(f"BLE: Sim params - grade={grade_pct:.2f}% -> incline={scaled_incline:.1f}%")
             else:
                 result = _RESULT_INVALID_PARAM
 
@@ -512,19 +524,20 @@ class BLEController:
 
         try:
             # Get current values
-            speed_kmh = 0.0
+            speed_mph = 0.0
             cadence_rpm = 0.0
             resistance_pct = 0.0
-            power_watts = 0
 
             if self.speed_controller:
-                speed_kmh = self.speed_controller.get_calculated_speed() or 0.0
+                speed_mph = self.speed_controller.get_calculated_speed() or 0.0
                 cadence_rpm = self.speed_controller.get_crank_rpm() or 0.0
 
             if self.load_controller:
                 resistance_pct = self.load_controller.get_current_load_percent() or 0.0
 
-            # Convert speed to FTMS units (km/h * 100)
+            # Convert speed from mph to FTMS units (km/h * 100)
+            # SpeedController returns mph, FTMS requires km/h with 0.01 resolution
+            speed_kmh = speed_mph * 1.60934
             speed_ftms = int(speed_kmh * 100)
             
             # Convert cadence to FTMS units (0.5 RPM resolution)
@@ -532,16 +545,35 @@ class BLEController:
             
             # Resistance (0.1 units)
             resistance_ftms = int(resistance_pct * 10)
+            
+            # Estimate power (watts) from speed and resistance
+            # Formula combines linear (rolling resistance) and cubic (air drag) components
+            # Base power: P = (5 * v) + (0.0025 * v³) gives realistic values:
+            #   - 15 km/h → ~83W, 25 km/h → ~164W, 35 km/h → ~282W
+            # Resistance factor scales from 0.5 (no resistance) to 1.5 (full resistance)
+            base_power = (5.0 * speed_kmh) + (0.0025 * speed_kmh * speed_kmh * speed_kmh)
+            resistance_factor = 0.5 + (resistance_pct / 100.0)
+            power_watts = int(base_power * resistance_factor)
 
-            # Build Indoor Bike Data
-            # Flags: Cadence present, Resistance present, Power present
+            # Build Indoor Bike Data according to FTMS Table 4.9
+            # Flags indicate which optional fields are present:
+            # - Bit 0 = 0: Instantaneous Speed IS present (mandatory when More Data = 0)
+            # - Bit 2 = 1: Instantaneous Cadence present
+            # - Bit 5 = 1: Resistance Level present
+            # - Bit 6 = 1: Instantaneous Power present
             flags = _IBD_INST_CADENCE | _IBD_RESISTANCE_LEVEL | _IBD_INST_POWER
 
-            data = struct.pack("<H", flags)          # Flags (2 bytes)
-            data += struct.pack("<H", speed_ftms)    # Speed (2 bytes) - always present
-            data += struct.pack("<H", cadence_ftms)  # Cadence (2 bytes)
-            data += struct.pack("<h", resistance_ftms)  # Resistance (2 bytes, signed)
-            data += struct.pack("<h", power_watts)   # Power (2 bytes, signed)
+            # Data order must match FTMS spec Table 4.9:
+            # 1. Flags (uint16)
+            # 2. Instantaneous Speed (uint16) - present because bit 0 = 0
+            # 3. Instantaneous Cadence (uint16) - present because bit 2 = 1
+            # 4. Resistance Level (sint16) - present because bit 5 = 1
+            # 5. Instantaneous Power (sint16) - present because bit 6 = 1
+            data = struct.pack("<H", flags)           # Flags (2 bytes)
+            data += struct.pack("<H", speed_ftms)     # Instantaneous Speed (2 bytes, uint16)
+            data += struct.pack("<H", cadence_ftms)   # Instantaneous Cadence (2 bytes, uint16)
+            data += struct.pack("<h", resistance_ftms)  # Resistance Level (2 bytes, sint16)
+            data += struct.pack("<h", power_watts)    # Instantaneous Power (2 bytes, sint16)
 
             self.ble.gatts_write(self.ftms_indoor_bike_data_handle, data)
             self.ble.gatts_notify(self.conn_handle, self.ftms_indoor_bike_data_handle, data)

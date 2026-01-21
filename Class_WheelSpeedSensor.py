@@ -35,34 +35,30 @@ class WheelSpeedSensor:
         One pulse = one full wheel revolution (360 degrees).
         Sensor is normally LOW and goes HIGH when triggered.
 
+        IMPORTANT: Keep this handler minimal - no memory allocation!
+        List cleanup is done in get_rpm() instead.
+
         Args:
             _pin: The pin that triggered the interrupt (unused but required by MicroPython).
         """
         current_time = utime.ticks_ms()
         self.pulse_count += 1
         self.last_pulse_time = current_time
-        self.pulse_times.append(current_time)
+        
+        # Only append if under limit - avoid memory allocation in interrupt
+        # List cleanup is done in get_rpm() to avoid GC in interrupt context
+        if len(self.pulse_times) < self.max_pulse_times:
+            self.pulse_times.append(current_time)
 
-        # Memory protection: limit list size
-        if len(self.pulse_times) > self.max_pulse_times:
-            self.pulse_times = self.pulse_times[-self.max_pulse_times:]
-
-        # Keep only pulses within the sample window
-        cutoff_time = current_time - self.sample_window_ms
-        self.pulse_times = [t for t in self.pulse_times if t > cutoff_time]
-
-    def _calculate_wheel_rpm(self):
+    def _calculate_wheel_rpm(self, current_time):
         """Calculate current wheel RPM from pulse data.
+
+        Args:
+            current_time: Current time in milliseconds from utime.ticks_ms().
 
         Returns:
             Wheel RPM (revolutions per minute), or 0 if not enough data.
         """
-        current_time = utime.ticks_ms()
-
-        # Clean up old pulses
-        cutoff_time = current_time - self.sample_window_ms
-        self.pulse_times = [t for t in self.pulse_times if t > cutoff_time]
-
         if len(self.pulse_times) >= 2:
             # Multiple pulses: calculate RPM from time span
             time_span = self.pulse_times[-1] - self.pulse_times[0]
@@ -90,15 +86,24 @@ class WheelSpeedSensor:
         """Get current wheel RPM.
 
         Processes pulses and returns the current wheel RPM.
+        Also performs list cleanup that was deferred from interrupt handler.
 
         Returns:
             Wheel RPM (revolutions per minute).
         """
-        # Clean up old pulse times
+        # Clean up old pulse times (older than sample window)
+        # This is done here instead of interrupt handler to avoid GC during interrupts
         current_time = utime.ticks_ms()
         cutoff_time = current_time - self.sample_window_ms
-        self.pulse_times = [t for t in self.pulse_times if t > cutoff_time]
+        
+        # Clean pulse_times list - filter in place to minimize allocations
+        i = 0
+        while i < len(self.pulse_times):
+            if self.pulse_times[i] <= cutoff_time:
+                self.pulse_times.pop(i)
+            else:
+                i += 1
 
         # Calculate and return current wheel RPM
-        return self._calculate_wheel_rpm()
+        return self._calculate_wheel_rpm(current_time)
 

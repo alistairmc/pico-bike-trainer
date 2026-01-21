@@ -38,27 +38,22 @@ class CrankSensor:
         One pulse = one full crank rotation (360 degrees).
         Sensor is normally LOW and goes HIGH when triggered.
 
+        IMPORTANT: Keep this handler minimal - no memory allocation!
+        List cleanup is done in get_rpm() instead.
+
         Args:
             _pin: The pin that triggered the interrupt (unused but required by MicroPython).
         """
         current_time = utime.ticks_ms()
         self.pulse_count += 1
         self.last_pulse_time = current_time
-        self.pulse_times.append(current_time)
-        self.crpm_pulse_times.append(current_time)  # Also add to extended window for CRPM
-
-        # Memory protection: limit list size
-        if len(self.pulse_times) > self.max_pulse_times:
-            self.pulse_times = self.pulse_times[-self.max_pulse_times:]
-        if len(self.crpm_pulse_times) > self.max_pulse_times:
-            self.crpm_pulse_times = self.crpm_pulse_times[-self.max_pulse_times:]
-
-        # Keep only pulses within the sample window (for speed calculation)
-        cutoff_time = current_time - self.sample_window_ms
-        self.pulse_times = [t for t in self.pulse_times if t > cutoff_time]
-        # Keep pulses within CRPM sample window (longer window for low RPM detection)
-        crpm_cutoff_time = current_time - self.crpm_sample_window_ms
-        self.crpm_pulse_times = [t for t in self.crpm_pulse_times if t > crpm_cutoff_time]
+        
+        # Only append if under limit - avoid memory allocation in interrupt
+        # List cleanup is done in get_rpm() to avoid GC in interrupt context
+        if len(self.pulse_times) < self.max_pulse_times:
+            self.pulse_times.append(current_time)
+        if len(self.crpm_pulse_times) < self.max_pulse_times:
+            self.crpm_pulse_times.append(current_time)
 
     def _calculate_crank_rpm(self):
         """Calculate current crank RPM from pulse data.
@@ -68,9 +63,7 @@ class CrankSensor:
         """
         current_time = utime.ticks_ms()
 
-        # Clean up old pulses from CRPM window
-        crpm_cutoff_time = current_time - self.crpm_sample_window_ms
-        self.crpm_pulse_times = [t for t in self.crpm_pulse_times if t > crpm_cutoff_time]
+        # Note: List cleanup is now done in get_rpm() to avoid allocations here
 
         if len(self.crpm_pulse_times) >= 2:
             # Multiple pulses: calculate RPM from time span
@@ -99,14 +92,32 @@ class CrankSensor:
         """Get current crank RPM.
 
         Processes pulses and returns the current crank RPM.
+        Also performs list cleanup that was deferred from interrupt handler.
 
         Returns:
             Crank RPM (revolutions per minute).
         """
         # Clean up old pulse times (older than sample window)
+        # This is done here instead of interrupt handler to avoid GC during interrupts
         current_time = utime.ticks_ms()
         cutoff_time = current_time - self.sample_window_ms
-        self.pulse_times = [t for t in self.pulse_times if t > cutoff_time]
+        crpm_cutoff_time = current_time - self.crpm_sample_window_ms
+        
+        # Clean pulse_times list - filter in place to minimize allocations
+        i = 0
+        while i < len(self.pulse_times):
+            if self.pulse_times[i] <= cutoff_time:
+                self.pulse_times.pop(i)
+            else:
+                i += 1
+        
+        # Clean crpm_pulse_times list
+        i = 0
+        while i < len(self.crpm_pulse_times):
+            if self.crpm_pulse_times[i] <= crpm_cutoff_time:
+                self.crpm_pulse_times.pop(i)
+            else:
+                i += 1
 
         # Calculate and return current crank RPM
         return self._calculate_crank_rpm()
